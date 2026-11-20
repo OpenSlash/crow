@@ -102,6 +102,10 @@ func (h *Handler) turn(req RespondRequest) (string, map[string]Tool, []llm.Tool)
 		if c, ok := t.(interface{ Enabled() bool }); ok && !c.Enabled() {
 			continue
 		}
+		// A tool may add guidance that only applies while it is offered.
+		if n, ok := t.(interface{ PromptNote() string }); ok {
+			system += "\n\n" + n.PromptNote()
+		}
 		spec := t.Spec()
 		byName[spec.Name] = t
 		specs = append(specs, spec)

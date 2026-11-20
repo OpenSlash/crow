@@ -245,3 +245,20 @@ func TestOpenComputerUseSettingsOnlyWhileOff(t *testing.T) {
 		t.Fatalf("run = %+v %v", res, err)
 	}
 }
+
+func TestToolPromptNotesFollowAvailability(t *testing.T) {
+	on := true
+	p := &scriptedProvider{responses: []llm.Response{{Text: "ok"}}}
+	h := NewHandler(func() (llm.Provider, error) { return p, nil }, 0,
+		UseComputer(func() bool { return on }),
+		OpenComputerUseSettings(func() bool { return !on }, func(context.Context) error { return nil }))
+	_, _ = h.Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	on = false
+	_, _ = h.Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	if s := p.requests[0].System; !strings.Contains(s, "Never say you cannot see the screen") || strings.Contains(s, "turned off") {
+		t.Fatalf("on prompt = %q", s)
+	}
+	if s := p.requests[1].System; strings.Contains(s, "Never say you cannot see") || !strings.Contains(s, "Computer use is turned off") {
+		t.Fatalf("off prompt = %q", s)
+	}
+}

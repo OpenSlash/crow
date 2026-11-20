@@ -52,11 +52,16 @@ func UseComputer(enabled func() bool) Tool { return useComputer{enabled} }
 
 func (t useComputer) Enabled() bool { return t.enabled == nil || t.enabled() }
 
+func (useComputer) PromptNote() string {
+	return "You can see and operate this Mac's screen through use_computer. Never say you cannot see the screen. " +
+		"For any request to look at, read, check or describe the screen, a window or an app, or to do something in an app, call use_computer."
+}
+
 func (useComputer) Spec() llm.Tool {
 	return llm.Tool{
 		Name: "use_computer",
-		Description: "Operate the user's Mac by looking at the screen and using the mouse and keyboard, e.g. in apps without another integration. " +
-			"Use it only when the user asks you to do something in an app on screen. Never for signing in, passwords or payments.",
+		Description: "Look at, read or operate the user's Mac screen: take screenshots, read what apps show, and use the mouse and keyboard. " +
+			"Use it whenever the user asks what is on screen or wants something done in an app. Never for signing in, passwords or payments.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -97,6 +102,11 @@ func OpenComputerUseSettings(disabled func() bool, open func(context.Context) er
 
 func (t openComputerUseSettings) Enabled() bool { return t.disabled == nil || t.disabled() }
 
+func (openComputerUseSettings) PromptNote() string {
+	return "Computer use is turned off, so you cannot see the screen right now. If the user asks you to look at or operate the screen, " +
+		"say it is off and offer to open its settings; call open_computer_use_settings after they agree."
+}
+
 func (openComputerUseSettings) Spec() llm.Tool {
 	return llm.Tool{
 		Name: "open_computer_use_settings",
@@ -126,8 +136,8 @@ func (delegateToCodex) Spec() llm.Tool {
 	return llm.Tool{
 		Name: "delegate_to_codex",
 		Description: "Hand a task to Codex, a local coding agent that can read and edit files, run terminal commands and work in code repositories. " +
-			"Use it for any request that needs local files, code, the terminal or long-running execution. " +
-			"Do not use it for questions you can answer directly.",
+			"Use it only for work on this Mac's files, code repositories or terminal. " +
+			"Do not use it for general questions, chat, weather, news or anything you can answer directly.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
