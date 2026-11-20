@@ -3192,8 +3192,28 @@ final class CrowIslandView: NSView {
     }
 
     func updateRuntimeState(_ nextState: IslandState) {
+        let wasApproval = executionPhase == "approval"
         state = nextState
         updateVoiceConversation(from: nextState)
+        if executionPhase == "approval" {
+            // Keep the island open while waiting for the user's decision.
+            cancelAutoClose()
+            if !wasApproval {
+                needsDisplay = true
+                snapshotApprovalIfRequested()
+            }
+        }
+    }
+
+    /// Development aid: with CROW_ISLAND_SNAPSHOT=<file.png>, renders the island when an
+    /// approval appears. It draws only Crow's own view: no screen capture.
+    private func snapshotApprovalIfRequested() {
+        guard let path = ProcessInfo.processInfo.environment["CROW_ISLAND_SNAPSHOT"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self, let rep = self.bitmapImageRepForCachingDisplay(in: self.bounds) else { return }
+            self.cacheDisplay(in: self.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     func noteSpeechPlaybackStarted() {
@@ -3267,13 +3287,19 @@ final class CrowIslandView: NSView {
         NSColor.clear.setFill()
         dirtyRect.fill()
 
-        if isExpanded || expansionProgress > 0.01 {
-            drawVoicePanel()
-        } else if executionPhase == "approval" {
+        // A pending approval takes over the island, also over an open voice panel
+        // (e.g. right after a hand-off), unless the user is speaking.
+        if isShowingApproval {
             drawApprovalPanel()
+        } else if isExpanded || expansionProgress > 0.01 {
+            drawVoicePanel()
         } else if shouldShowCompactBar {
             drawBar()
         }
+    }
+
+    private var isShowingApproval: Bool {
+        executionPhase == "approval" && !isRecording && !isTranscribing
     }
 
     private var shouldShowCompactBar: Bool {
@@ -3326,7 +3352,7 @@ final class CrowIslandView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if executionPhase == "approval" {
+        if isShowingApproval {
             if approvalApproveButtonRect.contains(point) {
                 submitApprovalAction(type: "approval.approve")
                 return
@@ -6123,25 +6149,23 @@ final class CrowIslandView: NSView {
         return executionPhase.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
+    /// The action being approved, e.g. "Allow: Use the computer" or "Allow: Clicking".
     private func approvalSummaryText() -> String {
-        let action = firstNonEmptyText(state.approvalAction, state.title)
+        let action = firstNonEmptyText(state.approvalAction, state.approvalTitle, state.title)
         let lower = action.lowercased()
-        if lower.contains("open -a") || lower.contains("open -b") {
-            return "Allow Codex to open an application?"
+        if lower.contains("/bin/zsh") || lower.contains("local command") {
+            return "Allow: run a local command"
         }
-        if lower.contains("/bin/zsh") || lower.contains("local command") || lower.contains("command") {
-            return "Allow Codex to run a local command?"
-        }
-        return "Allow Crow to continue this action?"
+        return action.isEmpty ? "Allow Crow to continue?" : "Allow: \(action)"
     }
 
+    /// What exactly will happen: the task, the click target or the text to type.
     private func approvalDetailText() -> String {
-        let risk = state.approvalRisk ?? 2
-        let title = firstNonEmptyText(state.approvalTitle, state.message)
-        if title.lowercased().contains("codex") {
-            return "Codex is requesting permission. Risk level \(risk)."
+        let preview = firstNonEmptyText(state.approvalPreview, state.detail)
+        if !preview.isEmpty {
+            return preview.replacingOccurrences(of: "\n", with: " ")
         }
-        return "Review required before continuing. Risk level \(risk)."
+        return "Review required before continuing. Risk level \(state.approvalRisk ?? 2)."
     }
 
     private func firstNonEmptyText(_ values: String?...) -> String {
