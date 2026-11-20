@@ -20,6 +20,8 @@ struct CrowAgentResponse: Decodable {
     let provider: String
     let needExecutor: Bool
     let executorHint: String?
+    /// Self-contained instruction for the executor, written by the model.
+    let executorTask: String?
 
     enum CodingKeys: String, CodingKey {
         case text
@@ -27,7 +29,14 @@ struct CrowAgentResponse: Decodable {
         case provider
         case needExecutor = "need_executor"
         case executorHint = "executor_hint"
+        case executorTask = "executor_task"
     }
+}
+
+/// What Crow is doing during a turn, e.g. kind "thinking" / label "Thinking".
+struct CrowAgentActivity: Decodable {
+    let kind: String
+    let label: String
 }
 
 enum CrowAgent {
@@ -79,6 +88,7 @@ enum CrowAgent {
     static func respondStream(
         input: String,
         onDelta: @escaping @Sendable (String) -> Void,
+        onActivity: @escaping @Sendable (CrowAgentActivity) -> Void = { _ in },
         completion: @escaping Completion
     ) {
         let endpoint: Endpoint
@@ -101,7 +111,7 @@ enum CrowAgent {
         ])
         CrowMacLog("agent stream request mode=\(endpoint.mode.rawValue) url=\(endpoint.url.absoluteString) chars=\(input.count)")
 
-        let delegate = StreamDelegate(onDelta: onDelta, completion: completion)
+        let delegate = StreamDelegate(onDelta: onDelta, onActivity: onActivity, completion: completion)
         let session = URLSession(configuration: endpoint.sessionConfiguration, delegate: delegate, delegateQueue: nil)
         delegate.attach(session: session)
         session.dataTask(with: request).resume()
@@ -158,16 +168,22 @@ enum CrowAgent {
     }
 }
 
-/// Parses the SSE stream: `delta` {text}, `done` CrowAgentResponse, `error` {code, message}.
+/// Parses the SSE stream: `delta` {text}, `activity` {kind, label}, `done` CrowAgentResponse, `error` {code, message}.
 private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let onDelta: @Sendable (String) -> Void
+    private let onActivity: @Sendable (CrowAgentActivity) -> Void
     private let completion: CrowAgent.Completion
     private var buffer = ""
     private var finished = false
     private var session: URLSession?
 
-    init(onDelta: @escaping @Sendable (String) -> Void, completion: @escaping CrowAgent.Completion) {
+    init(
+        onDelta: @escaping @Sendable (String) -> Void,
+        onActivity: @escaping @Sendable (CrowAgentActivity) -> Void,
+        completion: @escaping CrowAgent.Completion
+    ) {
         self.onDelta = onDelta
+        self.onActivity = onActivity
         self.completion = completion
     }
 
@@ -246,6 +262,10 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked
         case "delta":
             if let decoded = try? JSONDecoder().decode(DeltaPayload.self, from: data), !decoded.text.isEmpty {
                 onDelta(decoded.text)
+            }
+        case "activity":
+            if let decoded = try? JSONDecoder().decode(CrowAgentActivity.self, from: data) {
+                onActivity(decoded)
             }
         case "done":
             do {

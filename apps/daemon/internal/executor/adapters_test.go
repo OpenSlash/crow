@@ -161,3 +161,12 @@ func TestBuildConfiguredExecutorsDoesNotAutoRegisterCodeExecutor(t *testing.T) {
 		t.Fatalf("expected no configured executors, got %d", len(executors))
 	}
 }
+
+func TestACPActivityLabel(t *testing.T) {
+	cases := map[string]string{"read": "Reading files", "edit": "Editing files", "execute": "Running command", "search": "Searching", "": "Using tool"}
+	for kind, want := range cases {
+		if got := acpActivityLabel(kind); got != want {
+			t.Errorf("acpActivityLabel(%q) = %q, want %q", kind, got, want)
+		}
+	}
+}

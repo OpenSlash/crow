@@ -348,7 +348,7 @@ func (e *ACPExecutor) handleACPUpdate(ctx context.Context, taskID string, sink S
 		}
 	case "tool_call":
 		title := firstNonEmpty(getString(update, "title"), getString(update, "name"), "Tool call")
-		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "tool.started", Title: title, Message: acpToolMessage(update), Status: "running", Subtitle: "Using tool"})
+		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "tool.started", Title: title, Message: acpToolMessage(update), Status: "running", Subtitle: acpActivityLabel(getString(update, "kind"))})
 	case "tool_call_update":
 		status := getString(update, "status")
 		title := firstNonEmpty(getString(update, "title"), getString(update, "name"), "Tool update")
@@ -358,7 +358,11 @@ func (e *ACPExecutor) handleACPUpdate(ctx context.Context, taskID string, sink S
 		} else if status == "in_progress" || status == "pending" {
 			eventType = "tool.started"
 		}
-		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: eventType, Title: title, Message: acpToolMessage(update), Status: "running", Subtitle: "Tool " + firstNonEmpty(status, "updated")})
+		subtitle := "Tool " + firstNonEmpty(status, "updated")
+		if eventType == "tool.started" {
+			subtitle = acpActivityLabel(getString(update, "kind"))
+		}
+		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: eventType, Title: title, Message: acpToolMessage(update), Status: "running", Subtitle: subtitle})
 	case "usage_update":
 		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "executor.usage", Title: "Usage updated", Message: acpUsageText(update), Status: "running", Subtitle: "Usage"})
 	case "current_mode_update", "config_option_update", "available_commands_update", "session_info_update":
@@ -665,6 +669,25 @@ func acpPlanText(update map[string]any) string {
 		lines = append(lines, content)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// acpActivityLabel maps an ACP tool kind to the activity shown on the island.
+// The labels match the activity vocabulary in internal/agent.
+func acpActivityLabel(kind string) string {
+	switch kind {
+	case "read":
+		return "Reading files"
+	case "edit", "delete", "move":
+		return "Editing files"
+	case "search", "fetch":
+		return "Searching"
+	case "execute":
+		return "Running command"
+	case "think":
+		return "Thinking"
+	default:
+		return "Using tool"
+	}
 }
 
 func acpToolMessage(tool map[string]any) string {

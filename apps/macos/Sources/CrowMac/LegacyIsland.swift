@@ -3866,37 +3866,14 @@ final class CrowIslandView: NSView {
             voiceAgentPhase = "responding"
             voiceHint = "Crow is thinking"
             resetVoiceAgentSpeechOutput(stopPlayback: true)
-            if shouldFastDelegateToCodex(cleaned) {
-                voiceAgentText = "我交给 Codex 处理。"
-                voiceAgentPhase = "running"
-                voiceHint = "Starting Codex"
-                CrowMacLog("voice submit fast delegate codex chars=\(cleaned.count)")
-                submitVoiceCommand(text: cleaned, audioURL: nil)
-            } else {
-                CrowMacLog("voice submit crow agent chars=\(cleaned.count)")
-                respondToVoiceWithCrowAgent(text: cleaned)
-            }
-            if shouldFastDelegateToCodex(cleaned) {
-                scheduleAutoClose(delay: Self.voiceConversationNoResponseCloseDelay())
-            }
+            // The agent decides whether to answer or hand off to Codex (delegate_to_codex).
+            CrowMacLog("voice submit crow agent chars=\(cleaned.count)")
+            respondToVoiceWithCrowAgent(text: cleaned)
         }
         isTranscribing = false
         isFinishingVoiceCapture = false
         inputLevel = 0
         needsDisplay = true
-    }
-
-    private func shouldFastDelegateToCodex(_ text: String) -> Bool {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty else {
-            return false
-        }
-        let codexKeywords = [
-            "codex", "代码", "仓库", "项目", "文件", "终端", "命令", "执行", "运行", "修复", "实现", "开发", "测试",
-            "repo", "repository", "terminal", "shell", "command", "run ", "execute", "implement", "debug", "fix",
-            "write file", "edit file"
-        ]
-        return codexKeywords.contains { normalized.contains($0) }
     }
 
     private func respondToVoiceWithCrowAgent(text: String) {
@@ -3910,6 +3887,12 @@ final class CrowIslandView: NSView {
                 self.voiceHint = "Crow is responding"
                 self.voiceAgentText.append(delta)
                 self.enqueueVoiceAgentSpeech(delta: delta, flush: false)
+                self.needsDisplay = true
+            }
+        }, onActivity: { [weak self] activity in
+            DispatchQueue.main.async {
+                guard let self, self.voiceAgentText.isEmpty else { return }
+                self.voiceHint = activity.label
                 self.needsDisplay = true
             }
         }, completion: { [weak self] result in
@@ -3930,7 +3913,7 @@ final class CrowIslandView: NSView {
                         if self.didStartVoiceSpeechOutput || !self.voiceSpeechQueue.isEmpty || !self.voiceSpeechBuffer.isEmpty {
                             self.finishVoiceAgentStreamingSpeech(continueConversation: false)
                         }
-                        self.submitVoiceCommand(text: text, audioURL: nil)
+                        self.handOffVoiceCommand(response, originalText: text)
                     } else {
                         if !answer.isEmpty {
                             if self.didStartVoiceSpeechOutput || !self.voiceSpeechQueue.isEmpty || !self.voiceSpeechBuffer.isEmpty {
@@ -3950,6 +3933,15 @@ final class CrowIslandView: NSView {
         })
     }
 
+    /// Submits the executor task written by the agent, falling back to the user's words.
+    private func handOffVoiceCommand(_ response: CrowAgentResponse, originalText: String) {
+        let task = (response.executorTask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        voiceHint = "Starting Codex"
+        CrowMacLog("voice handoff executor=\(response.executorHint ?? "") taskChars=\(task.count)")
+        submitVoiceCommand(text: task.isEmpty ? originalText : task, audioURL: nil)
+        scheduleAutoClose(delay: Self.voiceConversationNoResponseCloseDelay())
+    }
+
     private func respondToVoiceWithCrowAgentFallback(text: String) {
         CrowAgent.respond(input: text) { [weak self] result in
             DispatchQueue.main.async {
@@ -3966,7 +3958,7 @@ final class CrowIslandView: NSView {
                     self.needsDisplay = true
 
                     if response.needExecutor {
-                        self.submitVoiceCommand(text: text, audioURL: nil)
+                        self.handOffVoiceCommand(response, originalText: text)
                     } else {
                         if !answer.isEmpty {
                             self.playVoiceAgentResponse(answer)

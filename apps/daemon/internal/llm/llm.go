@@ -13,21 +13,38 @@ import (
 )
 
 type Message struct {
-	Role    string // "user" or "assistant"
-	Content string
+	Role       string // "user", "assistant" or "tool"
+	Content    string
+	ToolCalls  []ToolCall // assistant messages that call tools
+	ToolCallID string     // tool messages: the call this result answers
+}
+
+// Tool is a function the model may call. Parameters is a JSON Schema object.
+type Tool struct {
+	Name        string
+	Description string
+	Parameters  map[string]any
+}
+
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string // JSON object
 }
 
 type Request struct {
 	System      string
 	Messages    []Message
+	Tools       []Tool
 	MaxTokens   int
 	Temperature float64
 }
 
 type Response struct {
-	Text     string
-	Model    string
-	Provider string
+	Text      string
+	ToolCalls []ToolCall
+	Model     string
+	Provider  string
 }
 
 // Provider streams a chat completion. onDelta receives text chunks as they arrive.

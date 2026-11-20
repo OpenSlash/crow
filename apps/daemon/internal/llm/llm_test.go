@@ -136,3 +136,84 @@ func TestConfigFromEnvLegacyFallback(t *testing.T) {
 		t.Fatalf("cfg = %+v", cfg)
 	}
 }
+
+var testTool = Tool{Name: "lookup", Description: "d", Parameters: map[string]any{"type": "object"}}
+
+func toolRequest() Request {
+	return Request{
+		Messages: []Message{
+			{Role: "user", Content: "q"},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "c0", Name: "lookup", Arguments: `{"x":0}`}}},
+			{Role: "tool", ToolCallID: "c0", Content: "r0"},
+		},
+		Tools: []Tool{testTool},
+	}
+}
+
+func TestOpenAIToolCalls(t *testing.T) {
+	srv := sseServer(t, "/v1/chat/completions", func(r *http.Request, body map[string]any) {
+		if tools := body["tools"].([]any); len(tools) != 1 {
+			t.Errorf("tools = %v", tools)
+		}
+		msgs := body["messages"].([]any)
+		if msgs[1].(map[string]any)["tool_calls"] == nil || msgs[2].(map[string]any)["tool_call_id"] != "c0" {
+			t.Errorf("history not serialized: %v", msgs)
+		}
+	},
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"look","arguments":"{\"x\""}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"up","arguments":":1}"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c2","function":{"name":"lookup","arguments":""}}]}}]}`,
+		`[DONE]`,
+	)
+	defer srv.Close()
+	p, _ := New(Config{Provider: "custom", BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	resp, err := p.Stream(context.Background(), toolRequest(), func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ToolCall{{ID: "c1", Name: "lookup", Arguments: `{"x":1}`}, {ID: "c2", Name: "lookup", Arguments: "{}"}}
+	if len(resp.ToolCalls) != 2 || resp.ToolCalls[0] != want[0] || resp.ToolCalls[1] != want[1] {
+		t.Fatalf("calls = %+v", resp.ToolCalls)
+	}
+}
+
+func TestAnthropicToolCalls(t *testing.T) {
+	srv := sseServer(t, "/v1/messages", func(r *http.Request, body map[string]any) {
+		tools := body["tools"].([]any)
+		if tools[0].(map[string]any)["input_schema"] == nil {
+			t.Errorf("tools = %v", tools)
+		}
+		msgs := body["messages"].([]any)
+		last := msgs[2].(map[string]any)["content"].([]any)[0].(map[string]any)
+		if last["type"] != "tool_result" || last["tool_use_id"] != "c0" {
+			t.Errorf("tool result = %v", last)
+		}
+	},
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"lookup"}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"x\":"}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"2}"}}`,
+		`{"type":"message_stop"}`,
+	)
+	defer srv.Close()
+	p, _ := New(Config{Provider: "anthropic", BaseURL: srv.URL + "/v1", APIKey: "k"})
+	resp, err := p.Stream(context.Background(), toolRequest(), func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "ok" || len(resp.ToolCalls) != 1 || resp.ToolCalls[0] != (ToolCall{ID: "t1", Name: "lookup", Arguments: `{"x":2}`}) {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+func TestAnthropicMergesToolResults(t *testing.T) {
+	msgs := anthropicMessages([]Message{
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "a"}, {ID: "b"}}},
+		{Role: "tool", ToolCallID: "a", Content: "1"},
+		{Role: "tool", ToolCallID: "b", Content: "2"},
+	})
+	if len(msgs) != 2 || len(msgs[1]["content"].([]map[string]any)) != 2 {
+		t.Fatalf("msgs = %+v", msgs)
+	}
+}

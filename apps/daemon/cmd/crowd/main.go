@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -150,9 +151,16 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 
 	agentHandler := agent.NewHandler(func() (llm.Provider, error) {
 		return llm.New(llm.ConfigFromEnv())
-	})
+	}, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps), agent.DelegateToCodex())
 	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
+}
+
+func intEnv(key string, fallback int) int {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func requireSessionToken(token string, next http.HandlerFunc) http.HandlerFunc {

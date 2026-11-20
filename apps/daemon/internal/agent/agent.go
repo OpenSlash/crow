@@ -34,6 +34,27 @@ type RespondResult struct {
 	Provider     string `json:"provider"`
 	NeedExecutor bool   `json:"need_executor"`
 	ExecutorHint string `json:"executor_hint,omitempty"`
+	ExecutorTask string `json:"executor_task,omitempty"`
+}
+
+// Events receives streaming output. Nil funcs are ignored.
+type Events struct {
+	Delta    func(text string) error
+	Activity func(Activity) error
+}
+
+func (e Events) delta(text string) error {
+	if e.Delta == nil {
+		return nil
+	}
+	return e.Delta(text)
+}
+
+func (e Events) activity(a Activity) error {
+	if e.Activity == nil {
+		return nil
+	}
+	return e.Activity(a)
 }
 
 // ProviderFunc returns the provider to use for a request. It is called per
@@ -42,20 +63,32 @@ type ProviderFunc func() (llm.Provider, error)
 
 type Handler struct {
 	provider ProviderFunc
+	tools    map[string]Tool
+	specs    []llm.Tool
+	maxSteps int
 }
 
-func NewHandler(provider ProviderFunc) *Handler {
-	return &Handler{provider: provider}
+// DefaultMaxSteps caps model requests per turn.
+const DefaultMaxSteps = 40
+
+func NewHandler(provider ProviderFunc, maxSteps int, tools ...Tool) *Handler {
+	if maxSteps <= 0 {
+		maxSteps = DefaultMaxSteps
+	}
+	h := &Handler{provider: provider, tools: map[string]Tool{}, maxSteps: maxSteps}
+	for _, t := range tools {
+		spec := t.Spec()
+		h.tools[spec.Name] = t
+		h.specs = append(h.specs, spec)
+	}
+	return h
 }
 
-func (h *Handler) Respond(ctx context.Context, req RespondRequest, onDelta func(string) error) (RespondResult, error) {
-	if shouldDelegateInput(req) {
-		hint := inferExecutorHint(req.Input)
-		text := handoffText(hint)
-		if err := onDelta(text); err != nil {
-			return RespondResult{}, err
-		}
-		return RespondResult{Text: text, Provider: "crow-router", NeedExecutor: true, ExecutorHint: hint}, nil
+// Respond runs the tool loop: call the model, run requested tools, feed results
+// back, until the model answers without tools, a tool hands off, or the step cap.
+func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (RespondResult, error) {
+	if req.NeedExecutor {
+		return h.handoff(RespondResult{Provider: "crow-router"}, "", Handoff{Executor: "codex", Task: strings.TrimSpace(req.Input)}, ev)
 	}
 
 	provider, err := h.provider()
@@ -70,21 +103,69 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, onDelta func(
 	if maxTokens <= 0 {
 		maxTokens = 900
 	}
-	resp, err := provider.Stream(ctx, llm.Request{
-		System:      systemPrompt(req),
-		Messages:    buildMessages(req),
-		MaxTokens:   maxTokens,
-		Temperature: temperature,
-	}, onDelta)
+	messages := buildMessages(req)
+	base := RespondResult{Model: provider.Model(), Provider: provider.Name()}
+
+	for step := 0; step < h.maxSteps; step++ {
+		if err := ev.activity(Activity{Kind: ActivityThinking, Label: "Thinking"}); err != nil {
+			return RespondResult{}, err
+		}
+		resp, err := provider.Stream(ctx, llm.Request{
+			System:      systemPrompt(req),
+			Messages:    messages,
+			Tools:       h.specs,
+			MaxTokens:   maxTokens,
+			Temperature: temperature,
+		}, ev.delta)
+		if err != nil {
+			return RespondResult{}, err
+		}
+		if len(resp.ToolCalls) == 0 {
+			base.Text = resp.Text
+			return base, nil
+		}
+
+		messages = append(messages, llm.Message{Role: "assistant", Content: resp.Text, ToolCalls: resp.ToolCalls})
+		for _, call := range resp.ToolCalls {
+			result := h.runTool(ctx, call, ev)
+			if result.Handoff != nil {
+				return h.handoff(base, resp.Text, *result.Handoff, ev)
+			}
+			messages = append(messages, llm.Message{Role: "tool", ToolCallID: call.ID, Content: result.Content})
+		}
+	}
+
+	base.Text = "这个任务步骤太多，我先停下了。需要的话让我继续。"
+	return base, ev.delta(base.Text)
+}
+
+func (h *Handler) runTool(ctx context.Context, call llm.ToolCall, ev Events) ToolResult {
+	tool, ok := h.tools[call.Name]
+	if !ok {
+		return ToolResult{Content: "Error: unknown tool " + call.Name}
+	}
+	_ = ev.activity(tool.Activity())
+	result, err := tool.Run(ctx, json.RawMessage(call.Arguments))
 	if err != nil {
-		return RespondResult{}, err
+		log.Printf("agent tool %s failed: %v", call.Name, err)
+		return ToolResult{Content: "Error: " + err.Error()}
 	}
-	result := RespondResult{Text: resp.Text, Model: resp.Model, Provider: resp.Provider}
-	if containsExecutorKeyword(strings.ToLower(resp.Text)) {
-		result.NeedExecutor = true
-		result.ExecutorHint = inferExecutorHint(req.Input + " " + resp.Text)
+	return result
+}
+
+// handoff ends the turn. spoken is text the model already streamed, if any.
+func (h *Handler) handoff(base RespondResult, spoken string, handoff Handoff, ev Events) (RespondResult, error) {
+	base.NeedExecutor = true
+	base.ExecutorHint = handoff.Executor
+	base.ExecutorTask = handoff.Task
+	base.Text = strings.TrimSpace(spoken)
+	if base.Text == "" {
+		base.Text = handoffText(handoff.Executor)
+		if err := ev.delta(base.Text); err != nil {
+			return RespondResult{}, err
+		}
 	}
-	return result, nil
+	return base, nil
 }
 
 // ServeRespond handles POST /v1/agent/respond.
@@ -93,7 +174,7 @@ func (h *Handler) ServeRespond(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := h.Respond(r.Context(), req, func(string) error { return nil })
+	result, err := h.Respond(r.Context(), req, Events{})
 	if err != nil {
 		log.Printf("agent respond failed: %v", err)
 		writeError(w, statusFor(err), err)
@@ -104,7 +185,7 @@ func (h *Handler) ServeRespond(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeRespondStream handles POST /v1/agent/respond-stream with SSE events
-// "delta" {text}, "done" RespondResult and "error" {code, message}.
+// "delta" {text}, "activity" {kind, label}, "done" RespondResult and "error" {code, message}.
 func (h *Handler) ServeRespondStream(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode(w, r)
 	if !ok {
@@ -129,8 +210,9 @@ func (h *Handler) ServeRespondStream(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	result, err := h.Respond(r.Context(), req, func(text string) error {
-		return send("delta", map[string]string{"text": text})
+	result, err := h.Respond(r.Context(), req, Events{
+		Delta:    func(text string) error { return send("delta", map[string]string{"text": text}) },
+		Activity: func(a Activity) error { return send("activity", a) },
 	})
 	if err != nil {
 		log.Printf("agent stream failed: %v", err)

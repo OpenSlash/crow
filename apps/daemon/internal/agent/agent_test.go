@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,54 +11,141 @@ import (
 	"github.com/crow/crow/apps/daemon/internal/llm"
 )
 
-type fakeProvider struct{ chunks []string }
+// scriptedProvider returns one scripted response per call and records requests.
+type scriptedProvider struct {
+	responses []llm.Response
+	requests  []llm.Request
+}
 
-func (f fakeProvider) Name() string  { return "fake" }
-func (f fakeProvider) Model() string { return "fake-1" }
-func (f fakeProvider) Stream(_ context.Context, _ llm.Request, onDelta func(string) error) (llm.Response, error) {
-	for _, c := range f.chunks {
-		if err := onDelta(c); err != nil {
+func (p *scriptedProvider) Name() string  { return "fake" }
+func (p *scriptedProvider) Model() string { return "fake-1" }
+func (p *scriptedProvider) Stream(_ context.Context, req llm.Request, onDelta func(string) error) (llm.Response, error) {
+	p.requests = append(p.requests, req)
+	resp := p.responses[0]
+	if len(p.responses) > 1 {
+		p.responses = p.responses[1:]
+	}
+	if resp.Text != "" {
+		if err := onDelta(resp.Text); err != nil {
 			return llm.Response{}, err
 		}
 	}
-	return llm.Response{Text: strings.Join(f.chunks, ""), Model: "fake-1", Provider: "fake"}, nil
+	return resp, nil
 }
 
-func handler(p llm.Provider, err error) *Handler {
-	return NewHandler(func() (llm.Provider, error) { return p, err })
+type echoTool struct{}
+
+func (echoTool) Spec() llm.Tool {
+	return llm.Tool{Name: "echo", Parameters: map[string]any{"type": "object"}}
+}
+func (echoTool) Activity() Activity { return Activity{Kind: ActivityReading, Label: "Reading"} }
+func (echoTool) Run(_ context.Context, args json.RawMessage) (ToolResult, error) {
+	return ToolResult{Content: "echo:" + string(args)}, nil
+}
+
+func newHandler(p *scriptedProvider, maxSteps int) *Handler {
+	return NewHandler(func() (llm.Provider, error) { return p, nil }, maxSteps, echoTool{}, DelegateToCodex())
+}
+
+func call(name, args string) llm.Response {
+	return llm.Response{ToolCalls: []llm.ToolCall{{ID: "c-" + name, Name: name, Arguments: args}}}
 }
 
 func TestRespondStreamSSE(t *testing.T) {
-	h := handler(fakeProvider{chunks: []string{"你", "好"}}, nil)
+	p := &scriptedProvider{responses: []llm.Response{{Text: "你好", Model: "fake-1", Provider: "fake"}}}
 	rec := httptest.NewRecorder()
-	h.ServeRespondStream(rec, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"input":"hello"}`)))
+	newHandler(p, 0).ServeRespondStream(rec, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"input":"hello"}`)))
 
 	body := rec.Body.String()
 	for _, want := range []string{
-		"event: delta\ndata: {\"text\":\"你\"}\n\n",
-		"event: delta\ndata: {\"text\":\"好\"}\n\n",
+		"event: activity\ndata: {\"kind\":\"thinking\",\"label\":\"Thinking\"}\n\n",
+		"event: delta\ndata: {\"text\":\"你好\"}\n\n",
 		"event: done\ndata: {\"text\":\"你好\",\"model\":\"fake-1\",\"provider\":\"fake\",\"need_executor\":false}\n\n",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in\n%s", want, body)
 		}
 	}
+	if len(p.requests[0].Tools) != 2 {
+		t.Errorf("tools not offered: %+v", p.requests[0].Tools)
+	}
 }
 
-func TestRespondDelegatesExecutorInput(t *testing.T) {
-	h := handler(nil, nil) // provider must not be called
-	res, err := h.Respond(context.Background(), RespondRequest{Input: "帮我修复这个仓库的测试"}, func(string) error { return nil })
+func TestToolLoopFeedsResultsBack(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{call("echo", `{"a":1}`), {Text: "done"}}}
+	var activities []string
+	res, err := newHandler(p, 0).Respond(context.Background(), RespondRequest{Input: "q"}, Events{
+		Activity: func(a Activity) error { activities = append(activities, a.Kind); return nil },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.NeedExecutor || res.Provider != "crow-router" {
+	if res.Text != "done" || len(p.requests) != 2 {
+		t.Fatalf("res = %+v requests = %d", res, len(p.requests))
+	}
+	msgs := p.requests[1].Messages
+	last := msgs[len(msgs)-1]
+	if last.Role != "tool" || last.ToolCallID != "c-echo" || last.Content != `echo:{"a":1}` {
+		t.Fatalf("tool result = %+v", last)
+	}
+	if strings.Join(activities, ",") != "thinking,reading,thinking" {
+		t.Fatalf("activities = %v", activities)
+	}
+}
+
+func TestDelegateToCodexHandsOff(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{call("delegate_to_codex", `{"task":"修复 crow 仓库的测试"}`)}}
+	var spoken strings.Builder
+	res, err := newHandler(p, 0).Respond(context.Background(), RespondRequest{Input: "帮我修一下测试"}, Events{
+		Delta: func(s string) error { spoken.WriteString(s); return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.NeedExecutor || res.ExecutorHint != "codex" || res.ExecutorTask != "修复 crow 仓库的测试" {
 		t.Fatalf("res = %+v", res)
+	}
+	if spoken.String() != res.Text || res.Text == "" {
+		t.Fatalf("handoff text not streamed: %q vs %q", spoken.String(), res.Text)
+	}
+}
+
+func TestToolErrorsAndUnknownToolsGoBackToModel(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{call("delegate_to_codex", `{}`), call("nope", `{}`), {Text: "ok"}}}
+	res, err := newHandler(p, 0).Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	if err != nil || res.Text != "ok" || res.NeedExecutor {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if got := p.requests[1].Messages[2].Content; !strings.HasPrefix(got, "Error: task is required") {
+		t.Fatalf("tool error = %q", got)
+	}
+	if got := p.requests[2].Messages[4].Content; got != "Error: unknown tool nope" {
+		t.Fatalf("unknown tool = %q", got)
+	}
+}
+
+func TestStepCap(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{call("echo", `{}`)}} // loops forever
+	res, err := newHandler(p, 3).Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.requests) != 3 || res.Text == "" {
+		t.Fatalf("requests = %d res = %+v", len(p.requests), res)
+	}
+}
+
+func TestNeedExecutorSkipsModel(t *testing.T) {
+	res, err := NewHandler(func() (llm.Provider, error) { panic("provider must not be called") }, 0).
+		Respond(context.Background(), RespondRequest{Input: "run tests", NeedExecutor: true}, Events{})
+	if err != nil || !res.NeedExecutor || res.ExecutorTask != "run tests" {
+		t.Fatalf("res = %+v err = %v", res, err)
 	}
 }
 
 func TestRespondNotConfigured(t *testing.T) {
 	_, cfgErr := llm.New(llm.Config{Provider: "openai"})
-	h := handler(nil, cfgErr)
+	h := NewHandler(func() (llm.Provider, error) { return nil, cfgErr }, 0)
 	rec := httptest.NewRecorder()
 	h.ServeRespond(rec, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"input":"hi"}`)))
 	if rec.Code != http.StatusPreconditionFailed || !strings.Contains(rec.Body.String(), "provider_not_configured") {

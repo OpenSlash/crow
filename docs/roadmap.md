@@ -25,14 +25,15 @@ Crow supports two ways to reach model services. Users pick one in Settings.
 - [x] Settings: mode, provider, base URL, model, key (Keychain, per provider, write-only to the daemon), "Test" button
 - [x] Update `.env.example` and README
 
-## Phase 1 — Agent loop and status events
+## Phase 1 — Agent loop and status events ✅
 
-- [ ] Tool calling in `internal/llm` (OpenAI + Anthropic)
-- [ ] Tool-calling loop in the daemon with a per-wake request cap (default 40)
-- [ ] Tool `delegate_to_codex` replaces the keyword heuristic (`shouldFastDelegateToCodex`)
-- [ ] Emit typed activity events: `thinking`, `reading`, `searching`, `writing`, `running`, `using_computer`
-- [ ] Map ACP tool updates from Codex to the same activity events
-- [ ] Island renders activity state (icon + short label)
+- [x] Tool calling in `internal/llm` (OpenAI + Anthropic, streamed)
+- [x] Tool-calling loop in the daemon with a per-turn request cap (`CROW_AGENT_MAX_STEPS`, default 40)
+- [x] Tool `delegate_to_codex` replaces the keyword heuristics (daemon and `shouldFastDelegateToCodex`); the model writes the task sent to Codex
+- [x] SSE `activity` event: `thinking`, `reading`, `searching`, `writing`, `running`, `using_computer`
+- [x] Map ACP tool kinds from Codex to activity labels (task subtitle)
+- [x] Island shows the activity label while the agent works
+- [ ] Per-activity icons on the island (design pending)
 
 ## Phase 2 — Long-term memory
 
