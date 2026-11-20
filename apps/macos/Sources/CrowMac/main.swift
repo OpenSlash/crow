@@ -191,6 +191,8 @@ struct RuntimeSettings: Codable, Equatable {
     var islandHotkey: String = ""
     var islandIdleCloseSeconds: String = ""
     var islandAvatarStyle: String = ""
+    /// App-only: "", "en" or "zh"; kept in runtime-settings.json, not sent to the daemon.
+    var uiLanguage: String = ""
     var agentMode: String = ""
     var llmProvider: String = ""
     var llmBaseUrl: String = ""
@@ -299,6 +301,7 @@ struct RuntimeSettings: Codable, Equatable {
             "CROW_ISLAND_HOTKEY": islandHotkey,
             "CROW_ISLAND_IDLE_CLOSE_SECONDS": islandIdleCloseSeconds,
             "CROW_ISLAND_AVATAR_STYLE": islandAvatarStyle,
+            "CROW_UI_LANGUAGE": uiLanguage,
             "CROW_AGENT_MODE": agentMode,
             "CROW_LLM_PROVIDER": llmProvider,
             "CROW_LLM_BASE_URL": llmBaseUrl,
@@ -775,8 +778,8 @@ final class CrowRPCClient {
 
 @MainActor
 final class CrowAppModel: ObservableObject {
-    @Published var statusText = "Starting Crow..."
-    @Published var detailText = "Preparing daemon"
+    @Published var statusText = L("Starting Crow...")
+    @Published var detailText = L("Preparing daemon")
     @Published var tasks: [CrowTask] = []
     @Published var pendingApprovals = 0
     @Published var commandText = ""
@@ -789,9 +792,9 @@ final class CrowAppModel: ObservableObject {
     @Published var approvalError = ""
     @Published var settings = RuntimeSettings()
     @Published var grants: [ApprovalGrant] = []
-    @Published var settingsStatus = "Settings not loaded"
+    @Published var settingsStatus = L("Settings not loaded")
     @Published var executorsSnapshot = ExecutorsSnapshot(executors: [], configDirs: [], warnings: nil)
-    @Published var executorsStatus = "Executors not loaded"
+    @Published var executorsStatus = L("Executors not loaded")
 
     private let supervisor = CrowDaemonSupervisor()
     private let computerUse = CrowComputerUseHost()
@@ -845,7 +848,7 @@ final class CrowAppModel: ObservableObject {
                 await loadSettings()
             }
         } catch {
-            statusText = "Crow disconnected"
+            statusText = L("Crow disconnected")
             detailText = error.localizedDescription
             client = nil
         }
@@ -870,11 +873,11 @@ final class CrowAppModel: ObservableObject {
                 activeTask = task
                 watchActiveTask()
                 commandText = ""
-                statusText = "Task started"
+                statusText = L("Task started")
                 detailText = task.title
                 await refresh()
             } catch {
-                statusText = "Task failed"
+                statusText = L("Task failed")
                 detailText = error.localizedDescription
             }
             isBusy = false
@@ -908,7 +911,7 @@ final class CrowAppModel: ObservableObject {
             do {
                 guard let client else { return }
                 grants = try await client.revokeGrants().grants
-                settingsStatus = "Approvals revoked"
+                settingsStatus = L("Approvals revoked")
             } catch {
                 settingsStatus = error.localizedDescription
             }
@@ -922,7 +925,7 @@ final class CrowAppModel: ObservableObject {
             do {
                 guard let client else { return }
                 _ = try await client.cancelTask(taskId: taskID)
-                statusText = "Stopping task"
+                statusText = L("Stopping task")
                 await refresh()
             } catch {
                 detailText = error.localizedDescription
@@ -938,9 +941,10 @@ final class CrowAppModel: ObservableObject {
             guard let client else { return }
             settings = try await client.getSettings()
             settings.islandAvatarStyle = CrowEnvironment.value("CROW_ISLAND_AVATAR_STYLE") ?? settings.islandAvatarStyle
+            settings.uiLanguage = CrowEnvironment.value("CROW_UI_LANGUAGE") ?? ""
             grants = (try? await client.listGrants().grants) ?? grants
             await loadExecutors()
-            settingsStatus = "Settings loaded"
+            settingsStatus = L("Settings loaded")
         } catch {
             settingsStatus = error.localizedDescription
         }
@@ -966,7 +970,7 @@ final class CrowAppModel: ObservableObject {
     func saveSettings(_ nextSettings: RuntimeSettings, newAPIKey: String = "") {
         guard !isBusy else { return }
         isBusy = true
-        settingsStatus = "Saving settings..."
+        settingsStatus = L("Saving settings...")
         let provider = CrowModelProvider.from(nextSettings.llmProvider)
         let typedKey = newAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typedKey.isEmpty {
@@ -978,9 +982,10 @@ final class CrowAppModel: ObservableObject {
                 guard let client else { throw NSError(domain: "CrowAppModel", code: 1, userInfo: [NSLocalizedDescriptionKey: "Daemon is not connected"]) }
                 settings = try await client.saveSettings(nextSettings, apiKey: apiKey)
                 settings.islandAvatarStyle = nextSettings.islandAvatarStyle
+                settings.uiLanguage = nextSettings.uiLanguage
                 try persistRuntimeSettings(settings)
                 CrowHotKeyCenter.shared.reload()
-                settingsStatus = "Settings saved"
+                settingsStatus = L("Settings saved")
             } catch {
                 settingsStatus = error.localizedDescription
             }
@@ -1000,11 +1005,11 @@ final class CrowAppModel: ObservableObject {
     }
 
     private func connect() async {
-        statusText = "Connecting to Crow..."
-        detailText = "Starting daemon if needed"
+        statusText = L("Connecting to Crow...")
+        detailText = L("Starting daemon if needed")
         guard let session = await supervisor.waitForSession() else {
-            statusText = "Daemon unavailable"
-            detailText = "Could not read runtime session"
+            statusText = L("Daemon unavailable")
+            detailText = L("Could not read runtime session")
             return
         }
         let client = CrowRPCClient(session: session)
@@ -1038,8 +1043,8 @@ final class CrowAppModel: ObservableObject {
             detailText = state.message.isEmpty ? state.phase : state.message
             pendingApprovals = state.pendingApprovals
         } else {
-            statusText = "Crow"
-            detailText = "Ready"
+            statusText = L("Crow")
+            detailText = L("Ready")
             pendingApprovals = snapshot.pendingApprovals.count
         }
         if activeApproval == nil || !snapshot.pendingApprovals.contains(where: { $0.id == activeApproval?.id }) {
@@ -1092,7 +1097,7 @@ final class CrowAppModel: ObservableObject {
                 } catch {
                     await MainActor.run {
                         guard self?.watchedTaskID == activeTaskID else { return }
-                        self?.detailText = "Task stream disconnected"
+                        self?.detailText = L("Task stream disconnected")
                         self?.refreshActiveTask()
                     }
                 }
@@ -1456,10 +1461,10 @@ final class CrowWindowController: NSWindowController {
     }
 
     private let model: CrowAppModel
-    private let statusLabel = NSTextField(labelWithString: "Crow")
-    private let detailLabel = NSTextField(labelWithString: "Starting")
+    private let statusLabel = NSTextField(labelWithString: L("Crow"))
+    private let detailLabel = NSTextField(labelWithString: L("Starting"))
     private var navRows: [MainView: ClickableStackView] = [:]
-    private let viewControl = NSSegmentedControl(labels: ["Account", "Settings", "Executors"], trackingMode: .selectOne, target: nil, action: nil)
+    private let viewControl = NSSegmentedControl(labels: [L("Account"), L("Settings"), L("Executors")], trackingMode: .selectOne, target: nil, action: nil)
     private let contentStack = NSStackView()
     private let historyPage = NSStackView()
     private let settingsPage = NSStackView()
@@ -1467,7 +1472,7 @@ final class CrowWindowController: NSWindowController {
     private let subscriptionPage = NSStackView()
     private let commandField = NSTextField(string: "")
     private let taskStack = NSStackView()
-    private let outputTitleLabel = NSTextField(labelWithString: "Current Task")
+    private let outputTitleLabel = NSTextField(labelWithString: L("Current Task"))
     private let outputTextView = NSTextView()
     private let eventStack = NSStackView()
     private let approvalContainer = NSStackView()
@@ -1482,14 +1487,14 @@ final class CrowWindowController: NSWindowController {
     private let islandHotkeyField = NSTextField(string: "")
     private let islandHotkeyRecorder = HotKeyRecorderButton(title: "Record shortcut", target: nil, action: nil)
     private let islandIdleCloseField = NSTextField(string: "")
-    private let streamTTSButton = NSButton(checkboxWithTitle: "Stream TTS output", target: nil, action: nil)
+    private let streamTTSButton = NSButton(checkboxWithTitle: L("Stream TTS output"), target: nil, action: nil)
     private let settingsStatusLabel = NSTextField(labelWithString: "")
     private let agentModePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let llmProviderPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let llmBaseURLField = NSTextField(string: "")
     private let llmModelField = NSTextField(string: "")
     private let llmAPIKeyField = NSSecureTextField(string: "")
-    private let testModelButton = NSButton(title: "Test", target: nil, action: nil)
+    private let testModelButton = NSButton(title: L("Test"), target: nil, action: nil)
     private let memoryEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let approvalPopUps: [CrowApprovalScope: NSPopUpButton] = Dictionary(
         uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0, NSPopUpButton(frame: .zero, pullsDown: false)) }
@@ -1497,22 +1502,23 @@ final class CrowWindowController: NSWindowController {
     private let grantsLabel = NSTextField(labelWithString: "")
     private let computerSeeOnlyButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let computerUseEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let uiLanguagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private var lastRenderedSettings: RuntimeSettings?
     private weak var settingsScroll: NSScrollView?
     private weak var computerUseCard: NSView?
-    private let screenRecordingButton = NSButton(title: "Grant", target: nil, action: nil)
-    private let accessibilityButton = NSButton(title: "Grant", target: nil, action: nil)
+    private let screenRecordingButton = NSButton(title: L("Grant"), target: nil, action: nil)
+    private let accessibilityButton = NSButton(title: L("Grant"), target: nil, action: nil)
     private let executorSummaryLabel = NSTextField(labelWithString: "")
     private let executorDetailLabel = NSTextField(labelWithString: "")
     private let executorListStack = NSStackView()
-    private let openExecutorsFolderButton = NSButton(title: "Open Folder", target: nil, action: nil)
-    private let installCodexConnectorButton = NSButton(title: "Add Codex", target: nil, action: nil)
-    private let runExecutorHealthCheckButton = NSButton(title: "Run Check", target: nil, action: nil)
+    private let openExecutorsFolderButton = NSButton(title: L("Open Folder"), target: nil, action: nil)
+    private let installCodexConnectorButton = NSButton(title: L("Add Codex"), target: nil, action: nil)
+    private let runExecutorHealthCheckButton = NSButton(title: L("Run Check"), target: nil, action: nil)
     private let subscriptionSummaryLabel = NSTextField(labelWithString: "")
     private let usageSummaryLabel = NSTextField(labelWithString: "")
-    private let voiceMinutesValueLabel = NSTextField(labelWithString: "0 min")
-    private let tasksRunValueLabel = NSTextField(labelWithString: "0")
-    private let approvalsHandledValueLabel = NSTextField(labelWithString: "0")
+    private let voiceMinutesValueLabel = NSTextField(labelWithString: L("0 min"))
+    private let tasksRunValueLabel = NSTextField(labelWithString: L("0"))
+    private let approvalsHandledValueLabel = NSTextField(labelWithString: L("0"))
     private var currentView: MainView = .subscription
     private var pendingIslandAvatarStyle: String?
     private var isRenderingSettings = false
@@ -1676,7 +1682,7 @@ final class CrowWindowController: NSWindowController {
         historyColumn.orientation = .vertical
         historyColumn.alignment = .width
         historyColumn.spacing = 0
-        historyColumn.addArrangedSubview(settingsSectionHeader(symbol: "clock", title: "Recent activity", subtitle: "A lightweight record of completed and running tasks"))
+        historyColumn.addArrangedSubview(settingsSectionHeader(symbol: "clock", title: L("Recent activity"), subtitle: L("A lightweight record of completed and running tasks")))
         historyColumn.addArrangedSubview(makeSeparator())
 
         taskStack.orientation = .vertical
@@ -1697,7 +1703,7 @@ final class CrowWindowController: NSWindowController {
         detailColumn.orientation = .vertical
         detailColumn.alignment = .width
         detailColumn.spacing = 0
-        detailColumn.addArrangedSubview(settingsSectionHeader(symbol: "doc.text.magnifyingglass", title: "Selected task", subtitle: "Summary and trace"))
+        detailColumn.addArrangedSubview(settingsSectionHeader(symbol: "doc.text.magnifyingglass", title: L("Selected task"), subtitle: L("Summary and trace")))
         detailColumn.addArrangedSubview(makeSeparator())
 
         approvalContainer.orientation = .vertical
@@ -1720,10 +1726,10 @@ final class CrowWindowController: NSWindowController {
         let approvalActions = NSStackView()
         approvalActions.orientation = .horizontal
         approvalActions.spacing = 8
-        let approve = NSButton(title: "Approve", target: self, action: #selector(approveActiveApproval))
+        let approve = NSButton(title: L("Approve"), target: self, action: #selector(approveActiveApproval))
         approve.bezelStyle = .rounded
         approve.controlSize = .large
-        let reject = NSButton(title: "Reject", target: self, action: #selector(rejectActiveApproval))
+        let reject = NSButton(title: L("Reject"), target: self, action: #selector(rejectActiveApproval))
         reject.bezelStyle = .rounded
         reject.controlSize = .large
         approvalActions.addArrangedSubview(approve)
@@ -1775,26 +1781,26 @@ final class CrowWindowController: NSWindowController {
 
         configureModelControls()
         let model = settingsCard(
-            settingsSectionHeader(symbol: "cpu", title: "Model", subtitle: "Local uses your own API key"),
+            settingsSectionHeader(symbol: "cpu", title: L("Model"), subtitle: L("Local uses your own API key")),
             [
-                settingsPopUpRow(symbol: "server.rack", title: "Mode", popUp: agentModePopUp),
-                settingsPopUpRow(symbol: "building.2", title: "Provider", popUp: llmProviderPopUp),
-                settingsFieldRow(symbol: "link", title: "Base URL", field: llmBaseURLField),
-                settingsFieldRow(symbol: "sparkles", title: "Model", field: llmModelField),
-                settingsFieldRow(symbol: "key", title: "API key", field: llmAPIKeyField),
-                settingsActionsRow(symbol: "checkmark.seal", title: "Connection", buttons: [testModelButton]),
+                settingsPopUpRow(symbol: "server.rack", title: L("Mode"), popUp: agentModePopUp),
+                settingsPopUpRow(symbol: "building.2", title: L("Provider"), popUp: llmProviderPopUp),
+                settingsFieldRow(symbol: "link", title: L("Base URL"), field: llmBaseURLField),
+                settingsFieldRow(symbol: "sparkles", title: L("Model"), field: llmModelField),
+                settingsFieldRow(symbol: "key", title: L("API key"), field: llmAPIKeyField),
+                settingsActionsRow(symbol: "checkmark.seal", title: L("Connection"), buttons: [testModelButton]),
             ]
         )
 
-        let openMemory = NSButton(title: "Open Folder", target: self, action: #selector(openMemoryFolder))
+        let openMemory = NSButton(title: L("Open Folder"), target: self, action: #selector(openMemoryFolder))
         openMemory.bezelStyle = .rounded
-        let clearMemory = NSButton(title: "Clear…", target: self, action: #selector(clearMemory))
+        let clearMemory = NSButton(title: L("Clear…"), target: self, action: #selector(clearMemory))
         clearMemory.bezelStyle = .rounded
         let memory = settingsCard(
-            settingsSectionHeader(symbol: "brain", title: "Memory", subtitle: "Markdown files on this Mac, versioned with Git"),
+            settingsSectionHeader(symbol: "brain", title: L("Memory"), subtitle: L("Markdown files on this Mac, versioned with Git")),
             [
-                settingsToggleRow(symbol: "brain.head.profile", title: "Remember things", button: memoryEnabledButton),
-                settingsActionsRow(symbol: "folder", title: "Files", buttons: [openMemory, clearMemory]),
+                settingsToggleRow(symbol: "brain.head.profile", title: L("Remember things"), button: memoryEnabledButton),
+                settingsActionsRow(symbol: "folder", title: L("Files"), buttons: [openMemory, clearMemory]),
             ]
         )
 
@@ -1806,13 +1812,13 @@ final class CrowWindowController: NSWindowController {
             button.action = action
         }
         let computer = settingsCard(
-            settingsSectionHeader(symbol: "cursorarrow.click.2", title: "Computer use", subtitle: "Off by default · stop anytime with ⌃⌥⎋"),
+            settingsSectionHeader(symbol: "cursorarrow.click.2", title: L("Computer use"), subtitle: L("Off by default · stop anytime with ⌃⌥⎋")),
             [
-                settingsToggleRow(symbol: "power", title: "Let Crow use this Mac", button: computerUseEnabledButton),
-                settingsToggleRow(symbol: "eye", title: "See only (no clicks or typing)", button: computerSeeOnlyButton),
-                settingsActionsRow(symbol: "rectangle.dashed.badge.record", title: "Screen Recording", buttons: [screenRecordingButton]),
-                settingsActionsRow(symbol: "accessibility", title: "Accessibility", buttons: [accessibilityButton]),
-                settingsNoteRow("Both permissions are granted in System Settings › Privacy & Security. Grant opens the right page; restart Crow after granting Screen Recording."),
+                settingsToggleRow(symbol: "power", title: L("Let Crow use this Mac"), button: computerUseEnabledButton),
+                settingsToggleRow(symbol: "eye", title: L("See only (no clicks or typing)"), button: computerSeeOnlyButton),
+                settingsActionsRow(symbol: "rectangle.dashed.badge.record", title: L("Screen Recording"), buttons: [screenRecordingButton]),
+                settingsActionsRow(symbol: "accessibility", title: L("Accessibility"), buttons: [accessibilityButton]),
+                settingsNoteRow(L("Both permissions are granted in System Settings › Privacy & Security. Grant opens the right page; restart Crow after granting Screen Recording.")),
             ]
         )
 
@@ -1821,37 +1827,47 @@ final class CrowWindowController: NSWindowController {
             guard let popUp = approvalPopUps[scope] else { continue }
             popUp.removeAllItems()
             for (value, title) in scope.policies {
-                popUp.addItem(withTitle: title)
+                popUp.addItem(withTitle: L(title))
                 popUp.lastItem?.representedObject = value
             }
-            approvalRows.append(settingsPopUpRow(symbol: scope.symbol, title: scope.title, popUp: popUp))
+            approvalRows.append(settingsPopUpRow(symbol: scope.symbol, title: L(scope.title), popUp: popUp))
         }
         grantsLabel.textColor = .secondaryLabelColor
         grantsLabel.font = .systemFont(ofSize: 12)
         grantsLabel.lineBreakMode = .byTruncatingTail
         grantsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let revokeGrants = NSButton(title: "Revoke All", target: self, action: #selector(revokeApprovalGrants))
+        let revokeGrants = NSButton(title: L("Revoke All"), target: self, action: #selector(revokeApprovalGrants))
         revokeGrants.bezelStyle = .rounded
-        let grantsRow = settingsActionsRow(symbol: "clock.badge.checkmark", title: "Active grants", buttons: [revokeGrants])
+        let grantsRow = settingsActionsRow(symbol: "clock.badge.checkmark", title: L("Active grants"), buttons: [revokeGrants])
         if let row = grantsRow as? NSStackView {
             row.insertArrangedSubview(grantsLabel, at: max(0, row.arrangedSubviews.count - 1))
         }
         approvalRows.append(grantsRow)
         let approvals = settingsCard(
-            settingsSectionHeader(symbol: "hand.raised", title: "Approvals", subtitle: "When Crow asks before acting"),
+            settingsSectionHeader(symbol: "hand.raised", title: L("Approvals"), subtitle: L("When Crow asks before acting")),
             approvalRows
         )
 
         configureTTSVoicePopUp()
         configureIslandAvatarPopUp()
+        if uiLanguagePopUp.numberOfItems == 0 {
+            // Language names stay in their own language.
+            for (value, title) in [("", L("Automatic")), ("en", "English"), ("zh", "中文")] {
+                uiLanguagePopUp.addItem(withTitle: title)
+                uiLanguagePopUp.lastItem?.representedObject = value
+            }
+            uiLanguagePopUp.target = self
+            uiLanguagePopUp.action = #selector(uiLanguageChanged)
+        }
         configureHotKeyRecorder()
         let voice = settingsCard(
-            settingsSectionHeader(symbol: "waveform", title: "Voice & island", subtitle: "Audio output and the island"),
+            settingsSectionHeader(symbol: "waveform", title: L("Voice & island"), subtitle: L("Audio output and the island")),
             [
-                settingsPopUpRow(symbol: "speaker.wave.2", title: "Voice", popUp: ttsVoicePopUp),
-                settingsPopUpRow(symbol: "bird", title: "Island appearance", popUp: islandAvatarPopUp),
-                settingsButtonRow(symbol: "keyboard", title: "Shortcut", button: islandHotkeyRecorder),
-                settingsFieldRow(symbol: "timer", title: "Idle close seconds", field: islandIdleCloseField),
+                settingsPopUpRow(symbol: "speaker.wave.2", title: L("Voice"), popUp: ttsVoicePopUp),
+                settingsPopUpRow(symbol: "bird", title: L("Island appearance"), popUp: islandAvatarPopUp),
+                settingsButtonRow(symbol: "keyboard", title: L("Shortcut"), button: islandHotkeyRecorder),
+                settingsFieldRow(symbol: "timer", title: L("Idle close seconds"), field: islandIdleCloseField),
+                settingsPopUpRow(symbol: "globe", title: L("Language"), popUp: uiLanguagePopUp),
             ]
         )
 
@@ -1890,10 +1906,10 @@ final class CrowWindowController: NSWindowController {
         actions.orientation = .horizontal
         actions.alignment = .centerY
         actions.spacing = 8
-        let reload = NSButton(title: "Reload", target: self, action: #selector(loadSettings))
+        let reload = NSButton(title: L("Reload"), target: self, action: #selector(loadSettings))
         reload.bezelStyle = .rounded
         reload.controlSize = .large
-        let save = NSButton(title: "Save Settings", target: self, action: #selector(saveSettings))
+        let save = NSButton(title: L("Save Settings"), target: self, action: #selector(saveSettings))
         save.bezelStyle = .rounded
         save.controlSize = .large
         actions.addArrangedSubview(reload)
@@ -1917,7 +1933,7 @@ final class CrowWindowController: NSWindowController {
         mainCard.spacing = 0
         mainCard.alignment = .width
 
-        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "point.3.connected.trianglepath.dotted", title: "Executors", subtitle: "Plugin connectors Crow can delegate to"))
+        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "point.3.connected.trianglepath.dotted", title: L("Executors"), subtitle: L("Plugin connectors Crow can delegate to")))
         mainCard.addArrangedSubview(makeSeparator())
         executorListStack.orientation = .vertical
         executorListStack.spacing = 0
@@ -1925,10 +1941,10 @@ final class CrowWindowController: NSWindowController {
         mainCard.addArrangedSubview(executorListStack)
         mainCard.addArrangedSubview(makeSeparator())
         configureExecutorButtons()
-        mainCard.addArrangedSubview(settingsActionsRow(symbol: "folder", title: "Adapter configs", buttons: [openExecutorsFolderButton, installCodexConnectorButton, runExecutorHealthCheckButton]))
+        mainCard.addArrangedSubview(settingsActionsRow(symbol: "folder", title: L("Adapter configs"), buttons: [openExecutorsFolderButton, installCodexConnectorButton, runExecutorHealthCheckButton]))
         executorsPage.addArrangedSubview(makeLargeCard(mainCard, showsBorder: false))
 
-        let hint = NSTextField(labelWithString: "Executors are installed as local connector manifests. Crow does not bundle Codex, Claude Code, OpenClaw, or MCP tools.")
+        let hint = NSTextField(labelWithString: L("Executors are installed as local connector manifests. Crow does not bundle Codex, Claude Code, OpenClaw, or MCP tools."))
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         hint.maximumNumberOfLines = 2
@@ -1961,12 +1977,12 @@ final class CrowWindowController: NSWindowController {
         planTitleRow.orientation = .horizontal
         planTitleRow.alignment = .centerY
         planTitleRow.spacing = 8
-        let planTitle = NSTextField(labelWithString: "Developer Preview")
+        let planTitle = NSTextField(labelWithString: L("Developer Preview"))
         planTitle.font = .systemFont(ofSize: 18, weight: .semibold)
         planTitleRow.addArrangedSubview(planTitle)
         planTitleRow.addArrangedSubview(makeSmallBadge("Local mode"))
         planText.addArrangedSubview(planTitleRow)
-        let planSubtitle = NSTextField(labelWithString: "Crow is running locally. The notch voice interface is the primary workspace.")
+        let planSubtitle = NSTextField(labelWithString: L("Crow is running locally. The notch voice interface is the primary workspace."))
         planSubtitle.font = .systemFont(ofSize: 12)
         planSubtitle.textColor = .secondaryLabelColor
         planSubtitle.maximumNumberOfLines = 2
@@ -1991,7 +2007,7 @@ final class CrowWindowController: NSWindowController {
         privacyIcon.contentTintColor = .secondaryLabelColor
         privacyIcon.widthAnchor.constraint(equalToConstant: 18).isActive = true
         footer.addArrangedSubview(privacyIcon)
-        let privacy = NSTextField(labelWithString: "Local data stays on your Mac.")
+        let privacy = NSTextField(labelWithString: L("Local data stays on your Mac."))
         privacy.font = .systemFont(ofSize: 11)
         privacy.textColor = .secondaryLabelColor
         footer.addArrangedSubview(privacy)
@@ -2003,7 +2019,7 @@ final class CrowWindowController: NSWindowController {
         let build = NSStackView()
         build.orientation = .horizontal
         build.alignment = .centerY
-        let dev = NSTextField(labelWithString: "</>  Developer Preview Build · v0.1.0 (47)")
+        let dev = NSTextField(labelWithString: L("</>  Developer Preview Build · v0.1.0 (47)"))
         dev.font = .systemFont(ofSize: 11)
         dev.textColor = .secondaryLabelColor
         build.addArrangedSubview(dev)
@@ -2186,7 +2202,7 @@ final class CrowWindowController: NSWindowController {
 
     private func configureModelControls() {
         guard agentModePopUp.numberOfItems == 0 else { return }
-        for (value, title) in [(CrowAgentMode.local.rawValue, "Local"), (CrowAgentMode.cloud.rawValue, "Crow Cloud")] {
+        for (value, title) in [(CrowAgentMode.local.rawValue, L("Local")), (CrowAgentMode.cloud.rawValue, "Crow Cloud")] {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.representedObject = value
             agentModePopUp.menu?.addItem(item)
@@ -2209,16 +2225,16 @@ final class CrowWindowController: NSWindowController {
     private func updateModelControlState() {
         let provider = CrowModelProvider.from(selectedPopUpValue(llmProviderPopUp, fallback: CrowModelProvider.openai.rawValue))
         let isLocal = selectedPopUpValue(agentModePopUp, fallback: CrowAgentMode.local.rawValue) == CrowAgentMode.local.rawValue
-        llmBaseURLField.placeholderString = provider == .custom ? "https://…/v1" : "Default"
-        llmModelField.placeholderString = provider.defaultModel.isEmpty ? "Required" : provider.defaultModel
+        llmBaseURLField.placeholderString = provider == .custom ? L("https://…/v1") : L("Default")
+        llmModelField.placeholderString = provider.defaultModel.isEmpty ? L("Required") : provider.defaultModel
         let hasKey = CrowModelKeychain.apiKey(for: provider) != nil
         // The daemon may also have a key from the environment (.env) for the saved provider.
         let savedProvider = CrowModelProvider(rawValue: model.settings.llmProvider) ?? .openai
         let hasEnvKey = model.settings.llmApiKeySet && provider == savedProvider
-        llmAPIKeyField.placeholderString = provider == .ollama ? "Not required"
-            : hasKey ? "Saved in Keychain"
-            : hasEnvKey ? "Set from environment (.env)"
-            : "Required"
+        llmAPIKeyField.placeholderString = provider == .ollama ? L("Not required")
+            : hasKey ? L("Saved in Keychain")
+            : hasEnvKey ? L("Set from environment (.env)")
+            : L("Required")
         for control in [llmProviderPopUp, llmBaseURLField, llmModelField, llmAPIKeyField] as [NSControl] {
             control.isEnabled = isLocal
         }
@@ -2230,7 +2246,7 @@ final class CrowWindowController: NSWindowController {
     }
 
     @objc private func testModelConnection() {
-        model.settingsStatus = "Testing model..."
+        model.settingsStatus = L("Testing model...")
         CrowAgent.respond(input: "Reply with exactly: OK") { [weak self] result in
             DispatchQueue.main.async {
                 switch result {
@@ -2617,6 +2633,16 @@ final class CrowWindowController: NSWindowController {
         llmAPIKeyField.stringValue = ""
     }
 
+    /// Saved right away; the interface is built once, so it applies after a restart.
+    @objc private func uiLanguageChanged() {
+        guard !isRenderingSettings else { return }
+        var settings = model.settings
+        settings.uiLanguage = selectedPopUpValue(uiLanguagePopUp, fallback: "")
+        model.settings.uiLanguage = settings.uiLanguage
+        try? model.persistRuntimeSettings(settings)
+        model.settingsStatus = L("Restart Crow to apply the language.")
+    }
+
     @objc private func islandAvatarStyleChanged() {
         guard !isRenderingSettings else { return }
         let style = selectedIslandAvatarStyle()
@@ -2632,12 +2658,12 @@ final class CrowWindowController: NSWindowController {
     }
 
     private func grantsSummary(_ grants: [ApprovalGrant]) -> String {
-        guard !grants.isEmpty else { return "None" }
+        guard !grants.isEmpty else { return L("None") }
         let formatter = ISO8601DateFormatter()
         let titles = Dictionary(uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0.rawValue, $0.title) })
         return grants.map { grant in
             let minutes = formatter.date(from: grant.expiresAt).map { max(1, Int($0.timeIntervalSinceNow / 60)) } ?? 0
-            return "\(titles[grant.scope] ?? grant.scope) · \(minutes) min"
+            return "\(L(titles[grant.scope] ?? grant.scope)) · \(minutes) \(L("min"))"
         }.joined(separator: ", ")
     }
 
@@ -2645,16 +2671,11 @@ final class CrowWindowController: NSWindowController {
     @objc private func computerUseToggled() {
         guard computerUseEnabledButton.state == .on else { return }
         let alert = NSAlert()
-        alert.messageText = "Let Crow use this Mac?"
-        alert.informativeText = """
-        Crow will see your screen and can click and type in apps when you ask it to. \
-        Screenshots are sent to your model provider. Models make mistakes: Crow asks before acting \
-        according to your approval settings, pauses when you use the mouse or keyboard, and never \
-        handles passwords or payments. Press Control-Option-Esc to stop at any time.
-        """
+        alert.messageText = L("Let Crow use this Mac?")
+        alert.informativeText = L("Crow will see your screen and can click and type in apps when you ask it to. Screenshots are sent to your model provider. Models make mistakes: Crow asks before acting according to your approval settings, pauses when you use the mouse or keyboard, and never handles passwords or payments. Press Control-Option-Esc to stop at any time.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Turn On")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Turn On"))
+        alert.addButton(withTitle: L("Cancel"))
         if alert.runModal() != .alertFirstButtonReturn {
             computerUseEnabledButton.state = .off
         }
@@ -2689,17 +2710,17 @@ final class CrowWindowController: NSWindowController {
     /// Deletes all memory files and their Git history.
     @objc private func clearMemory() {
         let alert = NSAlert()
-        alert.messageText = "Clear Crow's memory?"
-        alert.informativeText = "This deletes everything Crow remembers about you, including its history. This cannot be undone."
+        alert.messageText = L("Clear Crow's memory?")
+        alert.informativeText = L("This deletes everything Crow remembers about you, including its history. This cannot be undone.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Clear Memory").hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Clear Memory")).hasDestructiveAction = true
+        alert.addButton(withTitle: L("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             if FileManager.default.fileExists(atPath: memoryDirectory.path) {
                 try FileManager.default.removeItem(at: memoryDirectory)
             }
-            settingsStatusLabel.stringValue = "Memory cleared"
+            settingsStatusLabel.stringValue = L("Memory cleared")
         } catch {
             settingsStatusLabel.stringValue = "Could not clear memory: \(error.localizedDescription)"
         }
@@ -2710,7 +2731,7 @@ final class CrowWindowController: NSWindowController {
             let dir = try executorConfigDirectory()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             NSWorkspace.shared.open(dir)
-            model.executorsStatus = "Executor folder opened"
+            model.executorsStatus = L("Executor folder opened")
         } catch {
             model.executorsStatus = error.localizedDescription
         }
@@ -2722,13 +2743,13 @@ final class CrowWindowController: NSWindowController {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let url = dir.appendingPathComponent("codex.json")
             if FileManager.default.fileExists(atPath: url.path) {
-                model.executorsStatus = "Codex connector already installed"
+                model.executorsStatus = L("Codex connector already installed")
                 NSWorkspace.shared.activateFileViewerSelecting([url])
                 return
             }
             let data = try JSONSerialization.data(withJSONObject: codexConnectorManifest(), options: [.prettyPrinted, .sortedKeys])
             try data.write(to: url, options: [.atomic])
-            model.executorsStatus = "Codex connector installed"
+            model.executorsStatus = L("Codex connector installed")
             NSWorkspace.shared.activateFileViewerSelecting([url])
             Swift.Task { await model.loadExecutors() }
         } catch {
@@ -2737,7 +2758,7 @@ final class CrowWindowController: NSWindowController {
     }
 
     @objc private func runExecutorHealthCheck() {
-        model.executorsStatus = "Checking executors..."
+        model.executorsStatus = L("Checking executors...")
         renderSettings()
         Swift.Task {
             await model.loadExecutors(deep: true)
@@ -2780,14 +2801,14 @@ final class CrowWindowController: NSWindowController {
 
     private func render() {
         if currentView == .settings {
-            statusLabel.stringValue = "Settings"
-            detailLabel.stringValue = "Voice, island, and assistant preferences"
+            statusLabel.stringValue = L("Settings")
+            detailLabel.stringValue = L("Voice, island, and assistant preferences")
         } else if currentView == .executors {
-            statusLabel.stringValue = "Executors"
-            detailLabel.stringValue = "Local connectors Crow can delegate to"
+            statusLabel.stringValue = L("Executors")
+            detailLabel.stringValue = L("Local connectors Crow can delegate to")
         } else {
-            statusLabel.stringValue = "Crow"
-            detailLabel.stringValue = "Account, subscription, and usage"
+            statusLabel.stringValue = L("Crow")
+            detailLabel.stringValue = L("Account, subscription, and usage")
         }
         if commandField.stringValue != model.commandText && model.commandText.isEmpty {
             commandField.stringValue = ""
@@ -2801,7 +2822,7 @@ final class CrowWindowController: NSWindowController {
             view.removeFromSuperview()
         }
         if model.tasks.isEmpty {
-            let empty = NSTextField(labelWithString: "No tasks yet")
+            let empty = NSTextField(labelWithString: L("No tasks yet"))
             empty.textColor = .tertiaryLabelColor
             empty.font = .systemFont(ofSize: 13, weight: .medium)
             empty.alignment = .center
@@ -2872,7 +2893,7 @@ final class CrowWindowController: NSWindowController {
         if let task = model.activeTask {
             outputTitleLabel.stringValue = compactWindowText("\(task.status.uppercased()) · \(task.title)", limit: 58)
         } else {
-            outputTitleLabel.stringValue = "Current Task"
+            outputTitleLabel.stringValue = L("Current Task")
         }
         outputTextView.string = model.activeOutput
 
@@ -2917,7 +2938,7 @@ final class CrowWindowController: NSWindowController {
         // Live status refreshes every tick; controls only when saved settings change,
         // so unsaved edits are not overwritten by the render timer.
         for (button, granted) in [(screenRecordingButton, CrowComputerUseHost.hasScreenRecording), (accessibilityButton, CrowComputerUseHost.hasAccessibility)] {
-            button.title = granted ? "Granted" : "Grant"
+            button.title = granted ? L("Granted") : L("Grant")
             button.isEnabled = !granted
         }
         grantsLabel.stringValue = grantsSummary(model.grants)
@@ -2957,6 +2978,9 @@ final class CrowWindowController: NSWindowController {
         memoryEnabledButton.state = settings.memoryEnabled ? .on : .off
         computerSeeOnlyButton.state = settings.computerSeeOnly ? .on : .off
         computerUseEnabledButton.state = settings.computerUseEnabled ? .on : .off
+        if let item = uiLanguagePopUp.itemArray.first(where: { ($0.representedObject as? String) == settings.uiLanguage }) {
+            uiLanguagePopUp.select(item)
+        }
         for (scope, value) in [
             (CrowApprovalScope.computer, settings.approvalComputer),
             (.terminal, settings.approvalTerminal),
@@ -2981,7 +3005,7 @@ final class CrowWindowController: NSWindowController {
         }
         let executors = model.executorsSnapshot.executors.filter { !$0.fallbackValue }
         if executors.isEmpty {
-            executorListStack.addArrangedSubview(settingsInfoRow(symbol: "puzzlepiece.extension", title: "Installed", primary: executorSummaryLabel, secondary: executorDetailLabel))
+            executorListStack.addArrangedSubview(settingsInfoRow(symbol: "puzzlepiece.extension", title: L("Installed"), primary: executorSummaryLabel, secondary: executorDetailLabel))
             return
         }
         for (index, descriptor) in executors.enumerated() {
@@ -3214,12 +3238,12 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         item.button?.toolTip = "Crow"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Crow", action: #selector(showWindow), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Run Agent Smoke", action: #selector(runAgentSmoke), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Stop Task", action: #selector(stopTask), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("Show Crow"), action: #selector(showWindow), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("Refresh"), action: #selector(refresh), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("Run Agent Smoke"), action: #selector(runAgentSmoke), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("Stop Task"), action: #selector(stopTask), keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Crow", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("Quit Crow"), action: #selector(quit), keyEquivalent: "q"))
         for item in menu.items {
             item.target = self
         }
