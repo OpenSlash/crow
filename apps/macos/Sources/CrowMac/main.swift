@@ -162,7 +162,7 @@ struct Approval: Decodable {
     }
 }
 
-struct RuntimeSettings: Codable {
+struct RuntimeSettings: Codable, Equatable {
     var sttLanguage: String = ""
     var ttsProvider: String = ""
     var ttsVoice: String = ""
@@ -181,8 +181,12 @@ struct RuntimeSettings: Codable {
     var approvalTerminal: String = ""
     var approvalCodex: String = ""
     var approvalFileWrite: String = ""
+    var computerSeeOnly: Bool = false
+    var computerUseEnabled: Bool = false
 
     enum CodingKeys: String, CodingKey {
+        case computerUseEnabled
+        case computerSeeOnly
         case memoryEnabled
         case approvalComputer
         case approvalTerminal
@@ -226,6 +230,8 @@ struct RuntimeSettings: Codable {
         approvalTerminal = try container.decodeIfPresent(String.self, forKey: .approvalTerminal) ?? ""
         approvalCodex = try container.decodeIfPresent(String.self, forKey: .approvalCodex) ?? ""
         approvalFileWrite = try container.decodeIfPresent(String.self, forKey: .approvalFileWrite) ?? ""
+        computerSeeOnly = try container.decodeIfPresent(Bool.self, forKey: .computerSeeOnly) ?? false
+        computerUseEnabled = try container.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
     }
 
     /// `apiKey` is write-only: pass it only when the user entered or switched to a key.
@@ -242,6 +248,8 @@ struct RuntimeSettings: Codable {
                 "approvalTerminal": approvalTerminal,
                 "approvalCodex": approvalCodex,
                 "approvalFileWrite": approvalFileWrite,
+                "computerSeeOnly": computerSeeOnly,
+                "computerUseEnabled": computerUseEnabled,
                 "sttLanguage": sttLanguage,
                 "ttsProvider": ttsProvider,
                 "ttsVoice": ttsVoice,
@@ -265,6 +273,8 @@ struct RuntimeSettings: Codable {
             "CROW_APPROVAL_TERMINAL": approvalTerminal,
             "CROW_APPROVAL_CODEX": approvalCodex,
             "CROW_APPROVAL_FILE_WRITE": approvalFileWrite,
+            "CROW_COMPUTER_SEE_ONLY": computerSeeOnly ? "true" : "false",
+            "CROW_COMPUTER_USE_ENABLED": computerUseEnabled ? "true" : "false",
             "CROW_ISLAND_SCREEN": islandScreen,
             "CROW_ISLAND_HOTKEY": islandHotkey,
             "CROW_ISLAND_IDLE_CLOSE_SECONDS": islandIdleCloseSeconds,
@@ -563,13 +573,26 @@ final class CrowRPCClient {
     }
 
     func watchTask(taskId: String) throws -> AsyncThrowingStream<TaskEvent, Error> {
-        guard let url = URL(string: session.baseURL + "/crow.v1.TaskService/WatchTask") else {
+        try serverStream("/crow.v1.TaskService/WatchTask", body: ["taskId": taskId])
+    }
+
+    func watchComputerCommands() throws -> AsyncThrowingStream<CrowComputerCommand, Error> {
+        try serverStream("/crow.v1.ComputerService/WatchCommands", body: [:])
+    }
+
+    func submitComputerResult(_ body: [String: Any]) async throws {
+        let _: CrowEmptyResponse = try await unary("/crow.v1.ComputerService/SubmitResult", body: body)
+    }
+
+    /// Reads a Connect server-streaming RPC; each frame decodes as T.
+    private func serverStream<T: Decodable & Sendable>(_ path: String, body: [String: Any]) throws -> AsyncThrowingStream<T, Error> {
+        guard let url = URL(string: session.baseURL + path) else {
             throw NSError(domain: "CrowRPCClient", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid daemon URL"])
         }
         let token = session.token
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let requestBody = try JSONSerialization.data(withJSONObject: ["taskId": taskId], options: [])
+        let requestBody = try JSONSerialization.data(withJSONObject: body, options: [])
         let envelopedBody = connectEnvelope(payload: requestBody)
 
         return AsyncThrowingStream { continuation in
@@ -619,7 +642,7 @@ final class CrowRPCClient {
                         if flags & 0x02 != 0 {
                             break
                         }
-                        continuation.yield(try decoder.decode(TaskEvent.self, from: payload))
+                        continuation.yield(try decoder.decode(T.self, from: payload))
                     }
                     continuation.finish()
                 } catch is CancellationError {
@@ -732,6 +755,7 @@ final class CrowAppModel: ObservableObject {
     @Published var executorsStatus = "Executors not loaded"
 
     private let supervisor = CrowDaemonSupervisor()
+    private let computerUse = CrowComputerUseHost()
     private var client: CrowRPCClient?
     private var refreshTimer: Timer?
     private var activeTaskTimer: Timer?
@@ -760,6 +784,7 @@ final class CrowAppModel: ObservableObject {
         refreshTimer?.invalidate()
         activeTaskTimer?.invalidate()
         activeTaskWatch?.cancel()
+        computerUse.stop()
         supervisor.stop()
     }
 
@@ -938,7 +963,10 @@ final class CrowAppModel: ObservableObject {
             detailText = "Could not read runtime session"
             return
         }
-        client = CrowRPCClient(session: session)
+        let client = CrowRPCClient(session: session)
+        self.client = client
+        computerUse.onStop = { [weak self] in self?.cancelActiveTask() }
+        computerUse.start(client: client)
         await refresh()
     }
 
@@ -1405,6 +1433,11 @@ final class CrowWindowController: NSWindowController {
         uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0, NSPopUpButton(frame: .zero, pullsDown: false)) }
     )
     private let grantsLabel = NSTextField(labelWithString: "")
+    private let computerSeeOnlyButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let computerUseEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private var lastRenderedSettings: RuntimeSettings?
+    private let screenRecordingButton = NSButton(title: "Grant", target: nil, action: nil)
+    private let accessibilityButton = NSButton(title: "Grant", target: nil, action: nil)
     private let executorSummaryLabel = NSTextField(labelWithString: "")
     private let executorDetailLabel = NSTextField(labelWithString: "")
     private let executorListStack = NSStackView()
@@ -1704,6 +1737,23 @@ final class CrowWindowController: NSWindowController {
         let clearMemory = NSButton(title: "Clear…", target: self, action: #selector(clearMemory))
         clearMemory.bezelStyle = .rounded
         mainCard.addArrangedSubview(settingsActionsRow(symbol: "folder", title: "Files", buttons: [openMemory, clearMemory]))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "cursorarrow.click.2", title: "Computer use", subtitle: "Stop anytime with ⌃⌥⎋"))
+        mainCard.addArrangedSubview(makeSeparator())
+        computerUseEnabledButton.target = self
+        computerUseEnabledButton.action = #selector(computerUseToggled)
+        mainCard.addArrangedSubview(settingsToggleRow(symbol: "power", title: "Let Crow use this Mac", button: computerUseEnabledButton))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsToggleRow(symbol: "eye", title: "See only (no clicks or typing)", button: computerSeeOnlyButton))
+        mainCard.addArrangedSubview(makeSeparator())
+        for (button, action) in [(screenRecordingButton, #selector(grantScreenRecording)), (accessibilityButton, #selector(grantAccessibility))] {
+            button.bezelStyle = .rounded
+            button.target = self
+            button.action = action
+        }
+        mainCard.addArrangedSubview(settingsActionsRow(symbol: "rectangle.dashed.badge.record", title: "Screen Recording", buttons: [screenRecordingButton]))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsActionsRow(symbol: "accessibility", title: "Accessibility", buttons: [accessibilityButton]))
         mainCard.addArrangedSubview(makeSeparator())
         mainCard.addArrangedSubview(settingsSectionHeader(symbol: "hand.raised", title: "Approvals", subtitle: "When Crow asks before acting"))
         mainCard.addArrangedSubview(makeSeparator())
@@ -2364,6 +2414,7 @@ final class CrowWindowController: NSWindowController {
     }
 
     @objc private func loadSettings() {
+        lastRenderedSettings = nil
         Swift.Task {
             await model.loadSettings()
             await model.loadExecutors()
@@ -2377,6 +2428,8 @@ final class CrowWindowController: NSWindowController {
         settings.ttsVoice = selectedTTSVoice()
         settings.ttsStreaming = streamTTSButton.state == .on
         settings.memoryEnabled = memoryEnabledButton.state == .on
+        settings.computerSeeOnly = computerSeeOnlyButton.state == .on
+        settings.computerUseEnabled = computerUseEnabledButton.state == .on
         settings.approvalComputer = selectedApprovalPolicy(.computer)
         settings.approvalTerminal = selectedApprovalPolicy(.terminal)
         settings.approvalCodex = selectedApprovalPolicy(.codex)
@@ -2416,6 +2469,33 @@ final class CrowWindowController: NSWindowController {
             let minutes = formatter.date(from: grant.expiresAt).map { max(1, Int($0.timeIntervalSinceNow / 60)) } ?? 0
             return "\(titles[grant.scope] ?? grant.scope) · \(minutes) min"
         }.joined(separator: ", ")
+    }
+
+    /// Turning computer use on requires accepting a risk notice.
+    @objc private func computerUseToggled() {
+        guard computerUseEnabledButton.state == .on else { return }
+        let alert = NSAlert()
+        alert.messageText = "Let Crow use this Mac?"
+        alert.informativeText = """
+        Crow will see your screen and can click and type in apps when you ask it to. \
+        Screenshots are sent to your model provider. Models make mistakes: Crow asks before acting \
+        according to your approval settings, pauses when you use the mouse or keyboard, and never \
+        handles passwords or payments. Press Control-Option-Esc to stop at any time.
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Turn On")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() != .alertFirstButtonReturn {
+            computerUseEnabledButton.state = .off
+        }
+    }
+
+    @objc private func grantScreenRecording() {
+        CrowComputerUseHost.requestScreenRecording()
+    }
+
+    @objc private func grantAccessibility() {
+        CrowComputerUseHost.requestAccessibility()
     }
 
     @objc private func revokeApprovalGrants() {
@@ -2657,10 +2737,23 @@ final class CrowWindowController: NSWindowController {
     }
 
     private func renderSettings() {
-        guard currentView == .settings else { return }
+        guard currentView == .settings else {
+            lastRenderedSettings = nil
+            return
+        }
         isRenderingSettings = true
         defer { isRenderingSettings = false }
         let settings = model.settings
+        // Live status refreshes every tick; controls only when saved settings change,
+        // so unsaved edits are not overwritten by the render timer.
+        for (button, granted) in [(screenRecordingButton, CrowComputerUseHost.hasScreenRecording), (accessibilityButton, CrowComputerUseHost.hasAccessibility)] {
+            button.title = granted ? "Granted" : "Grant"
+            button.isEnabled = !granted
+        }
+        grantsLabel.stringValue = grantsSummary(model.grants)
+        settingsStatusLabel.stringValue = model.settingsStatus
+        guard settings != lastRenderedSettings else { return }
+        lastRenderedSettings = settings
         if !sttLanguageField.currentEditorExists {
             sttLanguageField.stringValue = settings.sttLanguage
         }
@@ -2692,6 +2785,8 @@ final class CrowWindowController: NSWindowController {
         }
         streamTTSButton.state = settings.ttsStreaming ? .on : .off
         memoryEnabledButton.state = settings.memoryEnabled ? .on : .off
+        computerSeeOnlyButton.state = settings.computerSeeOnly ? .on : .off
+        computerUseEnabledButton.state = settings.computerUseEnabled ? .on : .off
         for (scope, value) in [
             (CrowApprovalScope.computer, settings.approvalComputer),
             (.terminal, settings.approvalTerminal),
@@ -2704,8 +2799,6 @@ final class CrowWindowController: NSWindowController {
                 selectPopUp(popUp, value: shown, fallback: scope.defaultPolicy)
             }
         }
-        grantsLabel.stringValue = grantsSummary(model.grants)
-        settingsStatusLabel.stringValue = model.settingsStatus
     }
 
     private func renderExecutors() {
@@ -2922,8 +3015,8 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         islandController?.approvalHandler = { [weak model] _, approved in
             model?.decideActiveApproval(approved: approved)
         }
-        islandController?.voiceCommandHandler = { [weak model] text in
-            model?.createTask(command: text, mode: "agent")
+        islandController?.voiceCommandHandler = { [weak model] text, mode in
+            model?.createTask(command: text, mode: mode)
         }
         CrowMacLog("island applicationDidFinishLaunching")
         islandController?.applicationDidFinishLaunching(notification)

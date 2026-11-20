@@ -57,24 +57,25 @@ Crow supports two ways to reach model services. Users pick one in Settings.
 - [x] Persist grants with expiry in SQLite; Settings shows active grants with Revoke All
 - [x] Approval prompt on the island (existing). No system-dialog fallback: the island is always on screen
 
-## Phase 5 — Computer use
+## Phase 5 — Computer use ✅
 
-Off by default. Requires explicit opt-in with a risk notice.
+Off by default: Settings → "Let Crow use this Mac" shows a risk notice before turning it on.
 
-- [ ] Swift `ComputerUseHost` in CrowMac
-  - [ ] Screenshot (ScreenCaptureKit), scaled to model resolution with coordinate mapping
-  - [ ] Mouse / keyboard via `CGEvent` (move, click, drag, scroll, type, key combo, hold ≤ 30 s)
-  - [ ] Focus app / list windows
-  - [ ] Permission checks and onboarding (Accessibility, Screen Recording)
-- [ ] Bridge: CrowMac subscribes to `ComputerService.WatchCommands` stream from the daemon and replies with results
-- [ ] Daemon tools: Anthropic computer-use tool for Claude; generic function schema for other providers
-- [ ] Safety
-  - [ ] Pause on user mouse/keyboard input; resume after 2 s idle; give up after 15 s
-  - [ ] "See only" mode (screenshots, no input)
-  - [ ] Release all held keys/buttons at turn end
-  - [ ] Global stop hotkey; island shows a persistent "using computer" indicator
-  - [ ] Never handle logins, passwords or payments; stop and hand back to the user
-  - [ ] Only user-originated input can trigger computer use
+- [x] Swift `CrowComputerUseHost` in CrowMac
+  - [x] Screenshot (ScreenCaptureKit) of the main display, scaled to ≤ 1280 px wide, JPEG; coordinates map back to screen points
+  - [x] Mouse / keyboard via `CGEvent`: click (1–3, left/right/middle), move, drag, scroll, type, key combos; `open_app`
+  - [x] Permission checks and onboarding (Screen Recording, Accessibility) in Settings
+  - [ ] Hold keys for a duration; list windows
+- [x] Bridge: CrowMac subscribes to `ComputerService.WatchCommands` and replies with `SubmitResult`
+- [x] Daemon: `use_computer` hand-off creates a `computer` task; the computer executor runs its own tool loop and approvals (scope `computer`); tool results carry screenshots (OpenAI: follow-up user image message; Anthropic: image blocks in `tool_result`); only the 2 latest screenshots are kept
+- [ ] Anthropic native `computer_toolset_20260801` for Claude (all providers use the generic `computer` function tool for now)
+- [x] Safety
+  - [x] Wait while the user uses the mouse/keyboard (2 s idle); give up after 15 s
+  - [x] "See only" mode (screenshots, no input)
+  - [x] Release held modifier keys and mouse buttons when a task ends
+  - [x] Global stop shortcut ⌃⌥⎋ cancels the active task; the island shows the task's current action
+  - [x] Never handle logins, passwords or payments (prompt rule; typing into password fields is refused)
+  - [x] Only user-originated input can trigger computer use (voice/command turns only)
 
 ## Phase 6 — Reminders
 

@@ -24,6 +24,13 @@ service VoiceService {
   rpc CancelVoiceSession(CancelVoiceSessionRequest) returns (CancelVoiceSessionResponse);
 }
 
+// Computer use: the app watches for commands, runs them on this Mac and
+// submits results. The daemon never touches the screen or input itself.
+service ComputerService {
+  rpc WatchCommands(WatchComputerCommandsRequest) returns (stream ComputerCommand);
+  rpc SubmitResult(ComputerResult) returns (SubmitComputerResultResponse);
+}
+
 service ApprovalService {
   rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
   rpc DecideApproval(DecideApprovalRequest) returns (Approval);
@@ -77,6 +84,30 @@ message CreateTaskRequest {
 message GetTaskRequest {
   string task_id = 1;
 }
+
+message WatchComputerCommandsRequest {}
+
+message ComputerCommand {
+  string id = 1;
+  // screenshot, click, move, drag, type, key, scroll, open_app, release
+  string action = 2;
+  // Action arguments as a JSON object. Coordinates are in screenshot pixels.
+  string args_json = 3;
+}
+
+message ComputerResult {
+  string id = 1;
+  bool ok = 2;
+  string error = 3;
+  // A screenshot taken after the action, if any.
+  bytes image = 4;
+  string image_media_type = 5;
+  int32 width = 6;
+  int32 height = 7;
+  string text = 8;
+}
+
+message SubmitComputerResultResponse {}
 
 message CancelTaskRequest {
   string task_id = 1;
@@ -229,4 +260,8 @@ message Settings {
   string approval_terminal = 22;
   string approval_codex = 23;
   string approval_file_write = 24;
+  // Computer use may only take screenshots.
+  bool computer_see_only = 25;
+  // Computer use is off until the user turns it on.
+  bool computer_use_enabled = 26;
 }

@@ -44,6 +44,46 @@ type Handoff struct {
 	Task     string
 }
 
+type useComputer struct{ enabled func() bool }
+
+// UseComputer hands tasks that need the Mac's screen, mouse or keyboard to computer
+// use. It is offered only while enabled reports true.
+func UseComputer(enabled func() bool) Tool { return useComputer{enabled} }
+
+func (t useComputer) Enabled() bool { return t.enabled == nil || t.enabled() }
+
+func (useComputer) Spec() llm.Tool {
+	return llm.Tool{
+		Name: "use_computer",
+		Description: "Operate the user's Mac by looking at the screen and using the mouse and keyboard, e.g. in apps without another integration. " +
+			"Use it only when the user asks you to do something in an app on screen. Never for signing in, passwords or payments.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task": map[string]any{"type": "string", "description": "A complete, self-contained description of what to do on screen, in the user's language."},
+			},
+			"required": []string{"task"},
+		},
+	}
+}
+
+func (useComputer) Activity() Activity {
+	return Activity{Kind: ActivityUsingComputer, Label: "Using the computer"}
+}
+
+func (useComputer) Run(_ context.Context, args json.RawMessage) (ToolResult, error) {
+	var in struct {
+		Task string `json:"task"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+	}
+	if strings.TrimSpace(in.Task) == "" {
+		return ToolResult{}, fmt.Errorf("task is required")
+	}
+	return ToolResult{Handoff: &Handoff{Executor: "computer", Task: strings.TrimSpace(in.Task)}}, nil
+}
+
 type delegateToCodex struct{}
 
 // DelegateToCodex hands coding, file and terminal work to the Codex executor.

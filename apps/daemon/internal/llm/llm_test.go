@@ -217,3 +217,36 @@ func TestAnthropicMergesToolResults(t *testing.T) {
 		t.Fatalf("msgs = %+v", msgs)
 	}
 }
+
+func TestToolResultImages(t *testing.T) {
+	img := Image{MediaType: "image/jpeg", Data: []byte("jpg")}
+	msgs := []Message{
+		{Role: "user", Content: "look"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "a", Name: "computer"}, {ID: "b", Name: "computer"}}},
+		{Role: "tool", ToolCallID: "a", Content: "ok", Images: []Image{img}},
+		{Role: "tool", ToolCallID: "b", Content: "ok"},
+		{Role: "assistant", Content: "done"},
+	}
+
+	oa := openAIMessages(Request{Messages: msgs})
+	if len(oa) != 6 || oa[2]["role"] != "tool" || oa[3]["role"] != "tool" || oa[4]["role"] != "user" {
+		t.Fatalf("openai order = %v", oa)
+	}
+	parts := oa[4]["content"].([]map[string]any)
+	if url := parts[1]["image_url"].(map[string]any)["url"]; url != "data:image/jpeg;base64,anBn" {
+		t.Fatalf("image url = %v", url)
+	}
+
+	an := anthropicMessages(msgs)
+	results := an[2]["content"].([]map[string]any)
+	if len(results) != 2 {
+		t.Fatalf("anthropic results = %v", results)
+	}
+	blocks := results[0]["content"].([]map[string]any)
+	if blocks[1]["type"] != "image" || blocks[1]["source"].(map[string]any)["data"] != "anBn" {
+		t.Fatalf("anthropic image = %v", blocks)
+	}
+	if results[1]["content"] != "ok" {
+		t.Fatalf("plain result = %v", results[1])
+	}
+}

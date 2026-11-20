@@ -25,6 +25,7 @@ import (
 	"github.com/crow/crow/apps/daemon/gen/crow/v1/crowv1connect"
 	"github.com/crow/crow/apps/daemon/internal/agent"
 	"github.com/crow/crow/apps/daemon/internal/approval"
+	"github.com/crow/crow/apps/daemon/internal/computer"
 	"github.com/crow/crow/apps/daemon/internal/config"
 	"github.com/crow/crow/apps/daemon/internal/executor"
 	"github.com/crow/crow/apps/daemon/internal/llm"
@@ -55,6 +56,7 @@ type server struct {
 	// cancels holds the cancel func of each running task.
 	cancels map[string]context.CancelFunc
 	gate    *approval.Gate
+	bridge  *computer.Bridge
 }
 
 func newServer(store *store.Store) *server {
@@ -62,7 +64,12 @@ func newServer(store *store.Store) *server {
 	for _, warning := range warnings {
 		log.Printf("executor adapter warning: %s", warning)
 	}
+	bridge := computer.NewBridge()
+	executors = append([]executor.Executor{computer.NewExecutor(bridge, llmProvider,
+		func() bool { return boolEnvDefault("CROW_COMPUTER_SEE_ONLY", false) },
+		intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps)).WithEnabled(computerUseEnabled)}, executors...)
 	return &server{
+		bridge:    bridge,
 		gate:      approval.NewGate(store, approvalPolicyFromEnv, approvalGrantTTL),
 		store:     store,
 		startedAt: time.Now(),
@@ -154,14 +161,44 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 	mux.Handle(path, handler)
 	path, handler = crowv1connect.NewVoiceServiceHandler(runtime, interceptors)
 	mux.Handle(path, handler)
+	path, handler = crowv1connect.NewComputerServiceHandler(runtime, interceptors)
+	mux.Handle(path, handler)
 	mux.HandleFunc("/v1/executors", runtime.executorsHTTPHandler(token))
 
-	agentHandler := agent.NewHandler(func() (llm.Provider, error) {
-		return llm.New(llm.ConfigFromEnv())
-	}, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps), agent.DelegateToCodex()).
+	agentHandler := agent.NewHandler(llmProvider, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps),
+		agent.DelegateToCodex(), agent.UseComputer(computerUseEnabled)).
 		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) })
 	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
+}
+
+func computerUseEnabled() bool { return boolEnvDefault("CROW_COMPUTER_USE_ENABLED", false) }
+
+// llmProvider builds the provider from current settings on every call.
+func llmProvider() (llm.Provider, error) {
+	return llm.New(llm.ConfigFromEnv())
+}
+
+// WatchCommands streams computer-use commands to the app.
+func (s *server) WatchCommands(ctx context.Context, req *connect.Request[crowv1.WatchComputerCommandsRequest], stream *connect.ServerStream[crowv1.ComputerCommand]) error {
+	commands := s.bridge.Watch(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case cmd := <-commands:
+			if err := stream.Send(cmd); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *server) SubmitResult(ctx context.Context, req *connect.Request[crowv1.ComputerResult]) (*connect.Response[crowv1.SubmitComputerResultResponse], error) {
+	if err := s.bridge.Submit(req.Msg); err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	return connect.NewResponse(&crowv1.SubmitComputerResultResponse{}), nil
 }
 
 func intEnv(key string, fallback int) int {
@@ -786,6 +823,8 @@ func settingsFromEnv() *crowv1.Settings {
 		ApprovalTerminal:       firstNonEmptyEnv("CROW_APPROVAL_TERMINAL"),
 		ApprovalCodex:          firstNonEmptyEnv("CROW_APPROVAL_CODEX"),
 		ApprovalFileWrite:      firstNonEmptyEnv("CROW_APPROVAL_FILE_WRITE"),
+		ComputerSeeOnly:        boolEnvDefault("CROW_COMPUTER_SEE_ONLY", false),
+		ComputerUseEnabled:     computerUseEnabled(),
 	}
 	applyRuntimeSettingsFile(settings)
 	applySettingsToEnv(settings)
@@ -814,6 +853,8 @@ func applySettingsToEnv(settings *crowv1.Settings) {
 	setEnvIfPresent("CROW_APPROVAL_TERMINAL", settings.GetApprovalTerminal())
 	setEnvIfPresent("CROW_APPROVAL_CODEX", settings.GetApprovalCodex())
 	setEnvIfPresent("CROW_APPROVAL_FILE_WRITE", settings.GetApprovalFileWrite())
+	_ = os.Setenv("CROW_COMPUTER_SEE_ONLY", boolString(settings.GetComputerSeeOnly()))
+	_ = os.Setenv("CROW_COMPUTER_USE_ENABLED", boolString(settings.GetComputerUseEnabled()))
 }
 
 func setEnvIfPresent(key string, value string) {
@@ -904,6 +945,12 @@ func applyRuntimeSettingValues(settings *crowv1.Settings, values map[string]stri
 	}
 	if value, ok := values["CROW_MEMORY_ENABLED"]; ok {
 		settings.MemoryEnabled = parseBoolSetting(value, settings.MemoryEnabled)
+	}
+	if value, ok := values["CROW_COMPUTER_USE_ENABLED"]; ok {
+		settings.ComputerUseEnabled = parseBoolSetting(value, settings.ComputerUseEnabled)
+	}
+	if value, ok := values["CROW_COMPUTER_SEE_ONLY"]; ok {
+		settings.ComputerSeeOnly = parseBoolSetting(value, settings.ComputerSeeOnly)
 	}
 	for key, field := range map[string]*string{
 		"CROW_APPROVAL_COMPUTER":   &settings.ApprovalComputer,
@@ -1007,6 +1054,9 @@ func classifyKind(command string, mode string) string {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "agent" {
 		return "agent"
+	}
+	if mode == computer.Kind {
+		return computer.Kind
 	}
 	value := strings.ToLower(command + " " + mode)
 	switch {

@@ -2444,7 +2444,7 @@ final class CrowPanel: NSPanel {
 final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynthesizerDelegate {
     var stateProvider: (() -> IslandState?)?
     var approvalHandler: ((String, Bool) -> Void)?
-    var voiceCommandHandler: ((String) -> Void)?
+    var voiceCommandHandler: ((String, String) -> Void)?
 
     private var panelWidth: CGFloat = 640
     private var panelHeight: CGFloat = 210
@@ -2527,8 +2527,8 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
         islandView.approvalHandler = { [weak self] approvalId, approved in
             self?.approvalHandler?(approvalId, approved)
         }
-        islandView.voiceCommandHandler = { [weak self] text in
-            self?.voiceCommandHandler?(text)
+        islandView.voiceCommandHandler = { [weak self] text, mode in
+            self?.voiceCommandHandler?(text, mode)
         }
         panel.contentView = islandView
         panel.orderFrontRegardless()
@@ -3024,7 +3024,7 @@ enum IslandAvatarStyle: String {
 final class CrowIslandView: NSView {
     private let geometry: IslandGeometry
     var approvalHandler: ((String, Bool) -> Void)?
-    var voiceCommandHandler: ((String) -> Void)?
+    var voiceCommandHandler: ((String, String) -> Void)?
 
     var state: IslandState = .idle {
         didSet {
@@ -3973,9 +3973,10 @@ final class CrowIslandView: NSView {
     /// Submits the executor task written by the agent, falling back to the user's words.
     private func handOffVoiceCommand(_ response: CrowAgentResponse, originalText: String) {
         let task = (response.executorTask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        voiceHint = "Starting Codex"
+        let isComputer = response.executorHint == "computer"
+        voiceHint = isComputer ? "Using the computer" : "Starting Codex"
         CrowMacLog("voice handoff executor=\(response.executorHint ?? "") taskChars=\(task.count)")
-        submitVoiceCommand(text: task.isEmpty ? originalText : task, audioURL: nil)
+        submitVoiceCommand(text: task.isEmpty ? originalText : task, audioURL: nil, mode: isComputer ? "computer" : "agent")
         scheduleAutoClose(delay: Self.voiceConversationNoResponseCloseDelay())
     }
 
@@ -4762,13 +4763,14 @@ final class CrowIslandView: NSView {
         return max(1, value)
     }
 
-    private func submitVoiceCommand(text: String, audioURL: URL?) {
+    /// `mode` routes the task: "agent" (Codex and other executors) or "computer".
+    private func submitVoiceCommand(text: String, audioURL: URL?, mode: String = "agent") {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
             return
         }
         if let voiceCommandHandler {
-            voiceCommandHandler(cleaned)
+            voiceCommandHandler(cleaned, mode)
             return
         }
         let command = VoiceCommand(

@@ -98,10 +98,28 @@ func openAIMessages(req Request) []map[string]any {
 	if req.System != "" {
 		messages = append(messages, map[string]any{"role": "system", "content": req.System})
 	}
+	// Tool messages can't carry images, so images follow the tool results as a user message.
+	var pendingImages []map[string]any
+	flushImages := func() {
+		if len(pendingImages) > 0 {
+			content := append([]map[string]any{{"type": "text", "text": "Images returned by the tool calls above."}}, pendingImages...)
+			messages = append(messages, map[string]any{"role": "user", "content": content})
+			pendingImages = nil
+		}
+	}
 	for _, m := range req.Messages {
+		if m.Role != "tool" {
+			flushImages()
+		}
 		switch {
 		case m.Role == "tool":
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": m.ToolCallID, "content": m.Content})
+			for _, img := range m.Images {
+				pendingImages = append(pendingImages, map[string]any{
+					"type":      "image_url",
+					"image_url": map[string]any{"url": "data:" + img.MediaType + ";base64," + img.base64()},
+				})
+			}
 		case len(m.ToolCalls) > 0:
 			calls := make([]map[string]any, 0, len(m.ToolCalls))
 			for _, c := range m.ToolCalls {
@@ -116,6 +134,7 @@ func openAIMessages(req Request) []map[string]any {
 			messages = append(messages, map[string]any{"role": m.Role, "content": m.Content})
 		}
 	}
+	flushImages()
 	return messages
 }
 

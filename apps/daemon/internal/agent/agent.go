@@ -99,6 +99,9 @@ func (h *Handler) turn(req RespondRequest) (string, map[string]Tool, []llm.Tool)
 	byName := make(map[string]Tool, len(tools))
 	specs := make([]llm.Tool, 0, len(tools))
 	for _, t := range tools {
+		if c, ok := t.(interface{ Enabled() bool }); ok && !c.Enabled() {
+			continue
+		}
 		spec := t.Spec()
 		byName[spec.Name] = t
 		specs = append(specs, spec)

@@ -216,3 +216,15 @@ func TestCancelSkipsPendingTools(t *testing.T) {
 		t.Fatalf("err = %v runs = %d requests = %d", err, runs, len(p.requests))
 	}
 }
+
+func TestUseComputerOfferedOnlyWhenEnabled(t *testing.T) {
+	enabled := false
+	p := &scriptedProvider{responses: []llm.Response{{Text: "ok"}}}
+	h := NewHandler(func() (llm.Provider, error) { return p, nil }, 0, UseComputer(func() bool { return enabled }))
+	_, _ = h.Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	enabled = true
+	_, _ = h.Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	if len(p.requests[0].Tools) != 0 || len(p.requests[1].Tools) != 1 || p.requests[1].Tools[0].Name != "use_computer" {
+		t.Fatalf("tools = %v / %v", p.requests[0].Tools, p.requests[1].Tools)
+	}
+}

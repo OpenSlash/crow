@@ -100,7 +100,18 @@ func anthropicMessages(messages []Message) []map[string]any {
 	for _, m := range messages {
 		switch {
 		case m.Role == "tool":
-			block := map[string]any{"type": "tool_result", "tool_use_id": m.ToolCallID, "content": m.Content}
+			var content any = m.Content
+			if len(m.Images) > 0 {
+				blocks := []map[string]any{{"type": "text", "text": m.Content}}
+				for _, img := range m.Images {
+					blocks = append(blocks, map[string]any{
+						"type":   "image",
+						"source": map[string]any{"type": "base64", "media_type": img.MediaType, "data": img.base64()},
+					})
+				}
+				content = blocks
+			}
+			block := map[string]any{"type": "tool_result", "tool_use_id": m.ToolCallID, "content": content}
 			if n := len(out); n > 0 && out[n-1]["role"] == "user" {
 				if blocks, ok := out[n-1]["content"].([]map[string]any); ok && len(blocks) > 0 && blocks[0]["type"] == "tool_result" {
 					out[n-1]["content"] = append(blocks, block)

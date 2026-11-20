@@ -9,7 +9,7 @@ import (
 
 const basePrompt = `You are Crow, a macOS-native voice-first assistant.
 Answer directly and concisely in the user's language; replies are often spoken aloud.
-Use the provided tools when a request needs them. For local files, code, the terminal or long-running work, call delegate_to_codex instead of answering.
+Use the provided tools when a request needs them. For local files, code, the terminal or long-running work, call delegate_to_codex instead of answering. To act in an app on screen, call use_computer.
 Do not claim you performed local actions unless a tool result says so.`
 
 func systemPrompt(req RespondRequest) string {
@@ -41,8 +41,11 @@ func buildMessages(req RespondRequest) []llm.Message {
 }
 
 func handoffText(executor string) string {
-	if executor == "codex" {
+	switch executor {
+	case "codex":
 		return "我交给 Codex 处理。"
+	case "computer":
+		return "我来操作电脑。"
 	}
 	return "我交给本地执行器处理。"
 }

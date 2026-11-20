@@ -3,6 +3,7 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,7 +18,16 @@ type Message struct {
 	Content    string
 	ToolCalls  []ToolCall // assistant messages that call tools
 	ToolCallID string     // tool messages: the call this result answers
+	Images     []Image    // tool messages: images returned by the tool, e.g. screenshots
 }
+
+// Image is an encoded picture, e.g. a JPEG screenshot.
+type Image struct {
+	MediaType string // "image/jpeg" or "image/png"
+	Data      []byte
+}
+
+func (i Image) base64() string { return base64.StdEncoding.EncodeToString(i.Data) }
 
 // Tool is a function the model may call. Parameters is a JSON Schema object.
 type Tool struct {
