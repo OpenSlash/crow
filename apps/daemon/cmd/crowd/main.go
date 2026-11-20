@@ -174,7 +174,7 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 	mux.HandleFunc("/v1/executors", runtime.executorsHTTPHandler(token))
 
 	agentHandler := agent.NewHandler(llmProvider, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps),
-		append([]agent.Tool{agent.DelegateToCodex(), agent.UseComputer(computerUseEnabled)},
+		append([]agent.Tool{agent.DelegateToCodexIf(runtime.hasCodeExecutor), agent.UseComputer(computerUseEnabled)},
 			append(agent.ReminderTools(reminderAdapter{runtime.store}),
 				agent.OpenComputerUseSettings(func() bool { return !computerUseEnabled() }, runtime.openComputerUseSettings))...)...).
 		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) })
@@ -252,6 +252,12 @@ func (s *server) Perform(ctx context.Context, req *connect.Request[crowv1.Perfor
 		res.Image, res.ImageMediaType = images[0].Data, images[0].MediaType
 	}
 	return connect.NewResponse(res), nil
+}
+
+// hasCodeExecutor reports whether a hand-off to Codex reaches a real executor
+// rather than the fallback.
+func (s *server) hasCodeExecutor() bool {
+	return s.executors.Select(classifyKind("", "agent")).ID() != "mock"
 }
 
 // openComputerUseSettings asks the app to show Settings at Computer use. The

@@ -262,3 +262,15 @@ func TestToolPromptNotesFollowAvailability(t *testing.T) {
 		t.Fatalf("off prompt = %q", s)
 	}
 }
+
+func TestDelegateWithoutExecutorTellsModel(t *testing.T) {
+	p := &scriptedProvider{responses: []llm.Response{call("delegate_to_codex", `{"task":"fix tests"}`), {Text: "Codex 还没配置"}}}
+	h := NewHandler(func() (llm.Provider, error) { return p, nil }, 0, DelegateToCodexIf(func() bool { return false }))
+	res, err := h.Respond(context.Background(), RespondRequest{Input: "fix tests"}, Events{})
+	if err != nil || res.NeedExecutor || res.Text != "Codex 还没配置" {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if got := p.requests[1].Messages[2].Content; !strings.Contains(got, "Executors") {
+		t.Fatalf("tool result = %q", got)
+	}
+}

@@ -127,10 +127,14 @@ func (t openComputerUseSettings) Run(ctx context.Context, _ json.RawMessage) (To
 	return ToolResult{Content: "Opened Crow Settings at Computer use. Tell the user to turn on \"Let Crow use this Mac\", grant Screen Recording and Accessibility there, then click Save Settings."}, nil
 }
 
-type delegateToCodex struct{}
+type delegateToCodex struct{ available func() bool }
 
 // DelegateToCodex hands coding, file and terminal work to the Codex executor.
 func DelegateToCodex() Tool { return delegateToCodex{} }
+
+// DelegateToCodexIf is DelegateToCodex that, while no code executor is installed,
+// tells the model so instead of handing off to nothing.
+func DelegateToCodexIf(available func() bool) Tool { return delegateToCodex{available: available} }
 
 func (delegateToCodex) Spec() llm.Tool {
 	return llm.Tool{
@@ -155,7 +159,11 @@ func (delegateToCodex) Activity() Activity {
 	return Activity{Kind: ActivityRunning, Label: "Handing off to Codex"}
 }
 
-func (delegateToCodex) Run(_ context.Context, args json.RawMessage) (ToolResult, error) {
+func (t delegateToCodex) Run(_ context.Context, args json.RawMessage) (ToolResult, error) {
+	if t.available != nil && !t.available() {
+		return ToolResult{Content: "Codex is not set up, so nothing was handed off. Tell the user, in their language, " +
+			"to open the Executors page in Crow (执行器 in the Chinese interface) and add the Codex connector, then ask again."}, nil
+	}
 	var in struct {
 		Task string `json:"task"`
 	}
