@@ -65,7 +65,10 @@ Off by default: Settings → "Let Crow use this Mac" shows a risk notice before 
   - [x] Screenshot (ScreenCaptureKit) of the main display, scaled to ≤ 1280 px wide, JPEG; coordinates map back to screen points
   - [x] Mouse / keyboard via `CGEvent`: click (1–3, left/right/middle), move, drag, scroll, type, key combos; `open_app`
   - [x] Permission checks and onboarding (Screen Recording, Accessibility) in Settings
-  - [ ] Hold keys for a duration; list windows
+  - [x] `zoom` (re-capture a region at full detail), `windows` (list app windows), `focus` (raise an app or one of its windows)
+  - [x] Results include the pointer position and the front app/window; actions can skip the screenshot (`screenshot: false`)
+  - [ ] Hold keys or mouse buttons for a duration; multiple displays
+  - [ ] Run the input engine in a separate process
 - [x] Bridge: CrowMac subscribes to `ComputerService.WatchCommands` and replies with `SubmitResult`
 - [x] Daemon: `use_computer` hand-off creates a `computer` task; the computer executor runs its own tool loop and approvals (scope `computer`); tool results carry screenshots (OpenAI: follow-up user image message; Anthropic: image blocks in `tool_result`); only the 2 latest screenshots are kept
 - [ ] Anthropic native `computer_toolset_20260801` for Claude (all providers use the generic `computer` function tool for now)

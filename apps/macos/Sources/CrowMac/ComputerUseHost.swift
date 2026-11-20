@@ -107,7 +107,19 @@ final class CrowComputerUseHost {
                 Self.requestScreenRecording()
                 throw ComputerUseError("Crow needs Screen Recording permission. Ask the user to allow it in System Settings > Privacy & Security, then try again.")
             }
-            if command.action != "screenshot" {
+            var text = ""
+            var attachScreenshot = true
+            switch command.action {
+            case "screenshot":
+                break
+            case "zoom":
+                let shot = try await zoom(args)
+                attach(shot, to: &result)
+                attachScreenshot = false
+            case "windows":
+                text = listWindows()
+                attachScreenshot = false
+            default:
                 guard Self.hasAccessibility else {
                     Self.requestAccessibility()
                     throw ComputerUseError("Crow needs Accessibility permission to use the mouse and keyboard. Ask the user to allow it in System Settings > Privacy & Security, then try again.")
@@ -116,12 +128,12 @@ final class CrowComputerUseHost {
                 try await act(command.action, args)
                 lastPostedAt = Date()
                 try await Swift.Task.sleep(nanoseconds: 600_000_000)
+                attachScreenshot = (args["screenshot"] as? Bool) ?? true
             }
-            let shot = try await screenshot()
-            result["image"] = shot.jpeg.base64EncodedString()
-            result["imageMediaType"] = "image/jpeg"
-            result["width"] = shot.width
-            result["height"] = shot.height
+            if attachScreenshot {
+                attach(try await screenshot(), to: &result)
+            }
+            result["text"] = [text, screenContext()].filter { !$0.isEmpty }.joined(separator: "\n")
         } catch {
             result["ok"] = false
             result["error"] = error.localizedDescription
@@ -150,6 +162,8 @@ final class CrowComputerUseHost {
             scroll(direction: args["direction"] as? String ?? "down", amount: (args["amount"] as? NSNumber)?.intValue ?? 3)
         case "open_app":
             try await openApp(args["name"] as? String ?? "")
+        case "focus":
+            try await focus(app: args["name"] as? String ?? "", title: args["title"] as? String)
         default:
             throw ComputerUseError("Unknown action \(action)")
         }
@@ -193,15 +207,56 @@ final class CrowComputerUseHost {
         return point
     }
 
-    private func screenshot() async throws -> (jpeg: Data, width: Int, height: Int) {
+    private typealias Shot = (jpeg: Data, width: Int, height: Int)
+
+    private func attach(_ shot: Shot, to result: inout [String: Any]) {
+        result["image"] = shot.jpeg.base64EncodedString()
+        result["imageMediaType"] = "image/jpeg"
+        result["width"] = shot.width
+        result["height"] = shot.height
+    }
+
+    /// The whole main display, scaled to the screenshot coordinate space. The pointer is drawn in.
+    private func screenshot() async throws -> Shot {
+        let display = try await mainDisplay()
+        let scale = screenshotScale
+        return try await capture(display: display, region: nil,
+                                 width: Int((CGFloat(display.width) * scale).rounded()),
+                                 height: Int((CGFloat(display.height) * scale).rounded()))
+    }
+
+    /// A region of the latest screenshot (in its pixels), captured again at up to full detail.
+    private func zoom(_ args: [String: Any]) async throws -> Shot {
+        guard let x = (args["x"] as? NSNumber)?.doubleValue, let y = (args["y"] as? NSNumber)?.doubleValue,
+              let w = (args["width"] as? NSNumber)?.doubleValue, let h = (args["height"] as? NSNumber)?.doubleValue,
+              w >= 4, h >= 4 else {
+            throw ComputerUseError("zoom needs x, y, width and height (at least 4 pixels)")
+        }
+        let display = try await mainDisplay()
+        let scale = screenshotScale
+        let region = CGRect(x: x / scale, y: y / scale, width: w / scale, height: h / scale)
+            .intersection(CGRect(x: 0, y: 0, width: CGFloat(display.width), height: CGFloat(display.height)))
+        guard !region.isEmpty else { throw ComputerUseError("The zoom region is outside the screenshot") }
+        let backing = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.backingScaleFactor ?? 2
+        let fit = min(1, Self.maxScreenshotWidth / (region.width * backing), 800 / (region.height * backing))
+        return try await capture(display: display, region: region,
+                                 width: max(1, Int((region.width * backing * fit).rounded())),
+                                 height: max(1, Int((region.height * backing * fit).rounded())))
+    }
+
+    private func mainDisplay() async throws -> SCDisplay {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
             throw ComputerUseError("No display found")
         }
-        let scale = screenshotScale
+        return display
+    }
+
+    private func capture(display: SCDisplay, region: CGRect?, width: Int, height: Int) async throws -> Shot {
         let configuration = SCStreamConfiguration()
-        configuration.width = Int((CGFloat(display.width) * scale).rounded())
-        configuration.height = Int((CGFloat(display.height) * scale).rounded())
+        if let region { configuration.sourceRect = region }
+        configuration.width = width
+        configuration.height = height
         configuration.showsCursor = true
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: SCContentFilter(display: display, excludingWindows: []),
@@ -211,6 +266,92 @@ final class CrowComputerUseHost {
             throw ComputerUseError("Could not encode the screenshot")
         }
         return (jpeg, image.width, image.height)
+    }
+
+    /// Converts screen points to screenshot pixels.
+    private func screenshotPoint(_ point: CGPoint) -> (Int, Int) {
+        let scale = screenshotScale
+        return (Int(((point.x - displayBounds.minX) * scale).rounded()), Int(((point.y - displayBounds.minY) * scale).rounded()))
+    }
+
+    /// Pointer position and front window, so the model knows where it is.
+    private func screenContext() -> String {
+        var lines: [String] = []
+        if let location = CGEvent(source: nil)?.location {
+            let (x, y) = screenshotPoint(location)
+            lines.append("Pointer at (\(x), \(y)).")
+        }
+        if let app = NSWorkspace.shared.frontmostApplication {
+            var line = "Front app: \(app.localizedName ?? "unknown")"
+            if let title = focusedWindowTitle(pid: app.processIdentifier), !title.isEmpty {
+                line += ", window \"\(title)\""
+            }
+            lines.append(line + ".")
+        }
+        return lines.joined(separator: " ")
+    }
+
+    private func focusedWindowTitle(pid: pid_t) -> String? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.2)
+        var window: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window) == .success, let window else { return nil }
+        var title: CFTypeRef?
+        AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title)
+        return title as? String
+    }
+
+    // MARK: Windows
+
+    /// On-screen app windows, front to back, with bounds in screenshot pixels.
+    private func listWindows() -> String {
+        guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return "No windows found."
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        var lines: [String] = []
+        for window in info {
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
+                  (window[kCGWindowOwnerPID as String] as? Int32) != ownPID,
+                  let owner = window[kCGWindowOwnerName as String] as? String,
+                  let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
+                  bounds.width > 40, bounds.height > 40,
+                  bounds.intersects(displayBounds) else { continue }
+            let title = window[kCGWindowName as String] as? String ?? ""
+            let (x, y) = screenshotPoint(bounds.origin)
+            let scale = screenshotScale
+            lines.append("\(lines.count + 1). \(owner)\(title.isEmpty ? "" : " — \"\(title)\"") at (\(x), \(y)) size \(Int(bounds.width * scale))x\(Int(bounds.height * scale))")
+            if lines.count >= 30 { break }
+        }
+        return lines.isEmpty ? "No windows found on the main display." : "Windows, front to back:\n" + lines.joined(separator: "\n")
+    }
+
+    /// Brings an app forward and, if a title is given, raises its matching window.
+    private func focus(app name: String, title: String?) async throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !name.isEmpty else { throw ComputerUseError("name is required") }
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        guard let app = apps.first(where: { $0.localizedName?.lowercased() == name })
+            ?? apps.first(where: { $0.localizedName?.lowercased().contains(name) == true }) else {
+            throw ComputerUseError("\(name) is not running; use open_app")
+        }
+        if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !title.isEmpty {
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 0.5)
+            var windows: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &windows)
+            let match = (windows as? [AXUIElement])?.first { window in
+                var value: CFTypeRef?
+                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &value)
+                return (value as? String)?.lowercased().contains(title) == true
+            }
+            guard let match else { throw ComputerUseError("No \(app.localizedName ?? name) window titled \"\(title)\"") }
+            AXUIElementPerformAction(match, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(match, kAXMainAttribute as CFString, kCFBooleanTrue)
+        }
+        app.activate()
+        try await Swift.Task.sleep(nanoseconds: 400_000_000)
     }
 
     // MARK: Mouse

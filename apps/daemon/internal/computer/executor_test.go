@@ -123,7 +123,7 @@ func TestSeeOnlyAndDeclined(t *testing.T) {
 	if strings.Join(actions, ",") != "release" || !strings.Contains(p.requests[1].Messages[2].Content, "see-only") {
 		t.Fatalf("see-only: actions = %v result = %q", actions, p.requests[1].Messages[2].Content)
 	}
-	if tools := p.requests[0].Tools[0].Parameters["properties"].(map[string]any)["action"].(map[string]any)["enum"].([]string); len(tools) != 2 {
+	if tools := p.requests[0].Tools[0].Parameters["properties"].(map[string]any)["action"].(map[string]any)["enum"].([]string); len(tools) != 4 {
 		t.Fatalf("see-only actions offered = %v", tools)
 	}
 
@@ -156,5 +156,25 @@ func TestPruneScreenshots(t *testing.T) {
 	pruneScreenshots(msgs, 2)
 	if msgs[0].Images != nil || msgs[1].Images == nil || msgs[2].Images == nil {
 		t.Fatalf("pruned = %+v", msgs)
+	}
+}
+
+func TestReadOnlyActionsSkipApproval(t *testing.T) {
+	p := &scripted{responses: []llm.Response{
+		call(`{"action":"zoom","x":0,"y":0,"width":100,"height":50}`),
+		call(`{"action":"windows"}`),
+		call(`{"action":"focus","name":"Safari"}`),
+		{Text: "ok"},
+	}}
+	sink := &fakeSink{}
+	actions := run(t, p, sink, true, true) // see-only: focus must be refused
+	if strings.Join(actions, ",") != "zoom,windows,release" {
+		t.Fatalf("actions = %v", actions)
+	}
+	if strings.Join(sink.asked, ",") != "computer:Use the computer" {
+		t.Fatalf("approvals = %v", sink.asked)
+	}
+	if got := p.requests[1].Messages[2].Content; !strings.Contains(got, "Zoomed image") {
+		t.Fatalf("zoom result = %q", got)
 	}
 }

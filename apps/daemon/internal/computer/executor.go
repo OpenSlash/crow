@@ -16,8 +16,10 @@ import (
 const Kind = "computer"
 
 const systemPrompt = `You operate the user's Mac to complete a task, using the computer tool.
-Start with a screenshot. Coordinates are pixels in the most recent screenshot. Every action returns a fresh screenshot; check it before the next step.
-Prefer open_app and keyboard shortcuts over hunting for small targets.
+Start with a screenshot. Coordinates are pixels in the most recent full screenshot. Every action returns a fresh screenshot, the pointer position and the front window; check them before the next step.
+Use zoom to read small text or icons before clicking them; zoom images never change the coordinate space.
+To switch apps or windows, prefer windows + focus or open_app over clicking the Dock. Prefer keyboard shortcuts over hunting for small targets.
+Set screenshot to false only for steps whose result you do not need to see, such as typing into a field you just clicked.
 Never type passwords, sign in, enter payment details, approve purchases or change security or privacy settings: stop and ask the user to do that step.
 If an action reports that the user is using the computer, stop and say so.
 When the task is done or cannot be done, reply without calling tools: one or two sentences in the user's language.`
@@ -142,7 +144,7 @@ func (e *Executor) runAction(ctx context.Context, call llm.ToolCall, seeOnly boo
 	delete(args, "action")
 	event(executor.Event{Type: "tool.started", Title: label, Message: describe(action, args), Status: "running", Subtitle: label})
 
-	if action != "screenshot" && action != "wait" {
+	if !readOnly[action] {
 		if seeOnly {
 			return fail("see-only mode is on: you may only take screenshots")
 		}
@@ -176,7 +178,11 @@ func (e *Executor) runAction(ctx context.Context, call llm.ToolCall, seeOnly boo
 		msg.Content = text
 	}
 	if len(res.GetImage()) > 0 {
-		msg.Content += fmt.Sprintf(" Screenshot %dx%d attached.", res.GetWidth(), res.GetHeight())
+		if action == "zoom" {
+			msg.Content += fmt.Sprintf(" Zoomed image %dx%d attached; coordinates still refer to the full screenshot.", res.GetWidth(), res.GetHeight())
+		} else {
+			msg.Content += fmt.Sprintf(" Screenshot %dx%d attached.", res.GetWidth(), res.GetHeight())
+		}
 		msg.Images = []llm.Image{{MediaType: firstNonEmpty(res.GetImageMediaType(), "image/jpeg"), Data: res.GetImage()}}
 	}
 	return msg
@@ -197,8 +203,14 @@ func pruneScreenshots(messages []llm.Message, keep int) {
 	}
 }
 
+// readOnly actions only look; they need no approval and work in see-only mode.
+var readOnly = map[string]bool{"screenshot": true, "zoom": true, "windows": true, "wait": true}
+
 var actionLabels = map[string]string{
 	"screenshot": "Looking at the screen",
+	"zoom":       "Looking closer",
+	"windows":    "Listing windows",
+	"focus":      "Switching windows",
 	"click":      "Clicking",
 	"move":       "Moving the pointer",
 	"drag":       "Dragging",
@@ -221,6 +233,8 @@ func describe(action string, args map[string]any) string {
 		return fmt.Sprintf("Press %v", args["keys"])
 	case "open_app":
 		return fmt.Sprintf("Open %v", args["name"])
+	case "focus":
+		return strings.TrimSpace(fmt.Sprintf("Switch to %v %v", args["name"], firstNonEmpty(fmt.Sprint(args["title"]))))
 	case "click":
 		return fmt.Sprintf("%v click at (%v, %v)", firstNonEmpty(fmt.Sprint(args["button"]), "left"), args["x"], args["y"])
 	default:
@@ -230,33 +244,39 @@ func describe(action string, args map[string]any) string {
 }
 
 func toolSpec(seeOnly bool) llm.Tool {
-	actions := []string{"screenshot", "click", "move", "drag", "type", "key", "scroll", "open_app", "wait"}
+	actions := []string{"screenshot", "zoom", "windows", "click", "move", "drag", "type", "key", "scroll", "open_app", "focus", "wait"}
 	if seeOnly {
-		actions = []string{"screenshot", "wait"}
+		actions = []string{"screenshot", "zoom", "windows", "wait"}
 	}
 	number := func(desc string) map[string]any { return map[string]any{"type": "number", "description": desc} }
 	return llm.Tool{
 		Name: "computer",
-		Description: "Control the Mac's main display. Actions: screenshot; click (x, y, optional button left|right|middle, count 1-3); " +
+		Description: "Control the Mac's main display. Actions: screenshot; zoom (x, y, width, height: a region of the latest screenshot at full detail); " +
+			"windows (list open windows with app, title and bounds); click (x, y, optional button left|right|middle, count 1-3); " +
 			"move (x, y); drag (x, y to to_x, to_y); type (text); key (keys like \"cmd+c\", \"return\", \"cmd+shift+4\"); " +
-			"scroll (x, y, direction up|down|left|right, amount in lines); open_app (name, e.g. \"Safari\"); wait (seconds). " +
-			"Coordinates are pixels in the latest screenshot. Every action returns a new screenshot.",
+			"scroll (x, y, direction up|down|left|right, amount in lines); open_app (name, e.g. \"Safari\"); " +
+			"focus (name of the app, optional title of its window); wait (seconds). " +
+			"Coordinates are pixels in the latest full screenshot. Actions return a new screenshot unless screenshot is false.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":    map[string]any{"type": "string", "enum": actions},
-				"x":         number("Horizontal pixel in the latest screenshot."),
-				"y":         number("Vertical pixel in the latest screenshot."),
-				"to_x":      number("Drag end x."),
-				"to_y":      number("Drag end y."),
-				"button":    map[string]any{"type": "string", "enum": []string{"left", "right", "middle"}},
-				"count":     map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
-				"text":      map[string]any{"type": "string"},
-				"keys":      map[string]any{"type": "string"},
-				"direction": map[string]any{"type": "string", "enum": []string{"up", "down", "left", "right"}},
-				"amount":    map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
-				"name":      map[string]any{"type": "string"},
-				"seconds":   number("Seconds to wait, up to 10."),
+				"action":     map[string]any{"type": "string", "enum": actions},
+				"x":          number("Horizontal pixel in the latest screenshot."),
+				"y":          number("Vertical pixel in the latest screenshot."),
+				"to_x":       number("Drag end x."),
+				"to_y":       number("Drag end y."),
+				"button":     map[string]any{"type": "string", "enum": []string{"left", "right", "middle"}},
+				"count":      map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
+				"text":       map[string]any{"type": "string"},
+				"keys":       map[string]any{"type": "string"},
+				"direction":  map[string]any{"type": "string", "enum": []string{"up", "down", "left", "right"}},
+				"amount":     map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
+				"name":       map[string]any{"type": "string"},
+				"seconds":    number("Seconds to wait, up to 10."),
+				"width":      number("Zoom region width in screenshot pixels."),
+				"height":     number("Zoom region height in screenshot pixels."),
+				"title":      map[string]any{"type": "string", "description": "Window title (or part of it) for focus."},
+				"screenshot": map[string]any{"type": "boolean", "description": "Attach a screenshot after the action (default true)."},
 			},
 			"required": []string{"action"},
 		},
