@@ -165,7 +165,10 @@ func normalizeBaseURL(raw string) string {
 
 func httpClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if strings.EqualFold(env("CROW_OPENAI_DISABLE_PROXY"), "true") {
+	transport.Proxy = proxyFor
+	// CROW_LLM_DISABLE_PROXY, not crow-cloud's CROW_OPENAI_DISABLE_PROXY: that one
+	// is a server-side escape hatch and must not change how the daemon connects.
+	if strings.EqualFold(env("CROW_LLM_DISABLE_PROXY"), "true") {
 		transport.Proxy = nil
 	}
 	// No overall timeout: streams can be long. Requests are bounded by ctx.

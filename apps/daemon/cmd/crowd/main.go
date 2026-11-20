@@ -181,6 +181,18 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
 }
 
+// llmAPIKeyFromEnv also accepts the legacy CROW_OPENAI_API_KEY for the OpenAI
+// provider, matching llm.ConfigFromEnv, so Settings shows the key as set.
+func llmAPIKeyFromEnv() string {
+	if key := firstNonEmptyEnv("CROW_LLM_API_KEY"); key != "" {
+		return key
+	}
+	if provider := strings.ToLower(firstNonEmptyEnv("CROW_LLM_PROVIDER")); provider == "" || provider == "openai" {
+		return firstNonEmptyEnv("CROW_OPENAI_API_KEY")
+	}
+	return ""
+}
+
 func computerUseEnabled() bool { return boolEnvDefault("CROW_COMPUTER_USE_ENABLED", false) }
 
 // llmProvider builds the provider from current settings on every call.
@@ -945,7 +957,7 @@ func settingsFromEnv() *crowv1.Settings {
 		LlmProvider:            firstNonEmptyEnv("CROW_LLM_PROVIDER"),
 		LlmBaseUrl:             firstNonEmptyEnv("CROW_LLM_BASE_URL"),
 		LlmModel:               firstNonEmptyEnv("CROW_LLM_MODEL"),
-		LlmApiKey:              firstNonEmptyEnv("CROW_LLM_API_KEY"),
+		LlmApiKey:              llmAPIKeyFromEnv(),
 		MemoryEnabled:          boolEnvDefault("CROW_MEMORY_ENABLED", true),
 		ApprovalComputer:       firstNonEmptyEnv("CROW_APPROVAL_COMPUTER"),
 		ApprovalTerminal:       firstNonEmptyEnv("CROW_APPROVAL_TERMINAL"),

@@ -604,6 +604,16 @@ final class CrowRPCClient {
         let _: CrowEmptyResponse = try await unary("/crow.v1.ComputerService/SubmitResult", body: body)
     }
 
+    /// Long-lived streams to the local daemon: no idle timeout (the default 60 s drops
+    /// quiet streams such as computer commands) and no proxy for loopback.
+    private static let streamSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 24 * 60 * 60
+        configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
+        configuration.connectionProxyDictionary = [:]
+        return URLSession(configuration: configuration)
+    }()
+
     /// Reads a Connect server-streaming RPC; each frame decodes as T.
     private func serverStream<T: Decodable & Sendable>(_ path: String, body: [String: Any]) throws -> AsyncThrowingStream<T, Error> {
         guard let url = URL(string: session.baseURL + path) else {
@@ -626,7 +636,7 @@ final class CrowRPCClient {
                     request.setValue(token, forHTTPHeaderField: "x-crow-session-token")
                     request.httpBody = envelopedBody
 
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await CrowRPCClient.streamSession.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {
                         throw NSError(domain: "CrowRPCClient", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid daemon stream response"])
                     }
