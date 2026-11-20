@@ -2657,6 +2657,8 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
         }
         rememberSpoken(spokenTextKey)
         CrowMacLog("speech enqueue provider=\(speechOutputProvider()) text=\(spokenTextKey)")
+        // Synthesis takes a moment; the island must not start listening before the result is spoken.
+        islandView.expectSpeech()
         speak(speech, key: key)
     }
 
@@ -3088,6 +3090,9 @@ final class CrowIslandView: NSView {
     private var voiceSpeechBuffer = ""
     private var voiceSpeechQueue: [String] = []
     private var voiceAgentStream: CrowAgentStream?
+    /// A task result is being synthesized and will be spoken; don't start listening yet.
+    private var isAwaitingSpeech = false
+    private var awaitingSpeechTimeout: DispatchWorkItem?
     private var isVoiceSpeechInputFinished = false
     private var didStartVoiceSpeechOutput = false
     private var shouldContinueAfterVoiceSpeech = false
@@ -3216,7 +3221,26 @@ final class CrowIslandView: NSView {
         }
     }
 
+    /// A task result is about to be spoken. Listening waits for the end of playback
+    /// (noteSpeechPlaybackEnded), or a timeout if speech never starts or ends.
+    func expectSpeech() {
+        isAwaitingSpeech = true
+        cancelContinueListening()
+        awaitingSpeechTimeout?.cancel()
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, self.isAwaitingSpeech else { return }
+            CrowMacLog("speech never finished; resuming listening")
+            self.isAwaitingSpeech = false
+            if self.voiceAgentPhase == "completed" || self.voiceAgentPhase == "speaking" {
+                self.scheduleContinueListeningIfNeeded(after: self.lastVoiceUserText)
+            }
+        }
+        awaitingSpeechTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: timeout)
+    }
+
     func noteSpeechPlaybackStarted() {
+        isAwaitingSpeech = false
         guard isExpanded, didSubmitVoiceCommand else {
             return
         }
@@ -3227,6 +3251,8 @@ final class CrowIslandView: NSView {
     }
 
     func noteSpeechPlaybackEnded() {
+        isAwaitingSpeech = false
+        awaitingSpeechTimeout?.cancel()
         guard isExpanded, didSubmitVoiceCommand, !voiceAgentText.isEmpty else {
             return
         }
@@ -4446,7 +4472,7 @@ final class CrowIslandView: NSView {
             scheduleAutoClose(delay: Self.voiceConversationIdleCloseDelay())
             return
         }
-        guard !isRecording, !isTranscribing, voiceResponseSpeaker == nil, voiceStreamingSpeaker == nil, !voiceResponseSynthesizer.isSpeaking else {
+        guard !isRecording, !isTranscribing, voiceResponseSpeaker == nil, voiceStreamingSpeaker == nil, !voiceResponseSynthesizer.isSpeaking, !isAwaitingSpeech else {
             return
         }
         voiceHint = "Listening again soon"
@@ -4458,7 +4484,10 @@ final class CrowIslandView: NSView {
                   !self.isTranscribing,
                   self.voiceResponseSpeaker == nil,
                   self.voiceStreamingSpeaker == nil,
-                  !self.voiceResponseSynthesizer.isSpeaking else {
+                  !self.voiceResponseSynthesizer.isSpeaking,
+                  // A task result may be in synthesis or playing through the controller.
+                  !self.isAwaitingSpeech,
+                  self.voiceAgentPhase != "speaking" else {
                 return
             }
             self.beginVoiceCapture()
@@ -4580,7 +4609,7 @@ final class CrowIslandView: NSView {
             voiceHint = "Crow is responding"
         case "completed":
             voiceHint = "Response complete"
-            if !isSpeaking {
+            if !isSpeaking && !isAwaitingSpeech {
                 scheduleContinueListeningIfNeeded(after: lastVoiceUserText)
             }
         case "failed":
