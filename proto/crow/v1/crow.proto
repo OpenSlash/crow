@@ -14,6 +14,8 @@ service TaskService {
   rpc GetTask(GetTaskRequest) returns (TaskDetail);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
   rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
+  // Stops a running task. The executor is cancelled and the task ends as "cancelled".
+  rpc CancelTask(CancelTaskRequest) returns (Task);
 }
 
 service VoiceService {
@@ -69,6 +71,10 @@ message CreateTaskRequest {
 }
 
 message GetTaskRequest {
+  string task_id = 1;
+}
+
+message CancelTaskRequest {
   string task_id = 1;
 }
 

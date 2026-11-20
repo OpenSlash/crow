@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -292,6 +293,8 @@ func (e *CommandExecutor) Run(ctx context.Context, request Request, sink Sink) e
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-lc", e.command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 	env := append(os.Environ(),
 		"CROW_EXECUTOR_ID="+e.id,
 		"CROW_TASK_ID="+request.TaskID,

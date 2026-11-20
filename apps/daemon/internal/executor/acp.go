@@ -11,8 +11,13 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
+
+// acpCancelGrace is how long a cancelled ACP turn may take to stop on its own
+// after session/cancel before the process is killed.
+var acpCancelGrace = 3 * time.Second
 
 type ACPExecutor struct {
 	id                string
@@ -209,7 +214,10 @@ func (e *ACPExecutor) Run(ctx context.Context, request Request, sink Sink) error
 	handler := func(handlerCtx context.Context, envelope acpRPCEnvelope) {
 		e.handleACPEnvelope(handlerCtx, request.TaskID, sink, envelope, &assistantBuffer)
 	}
-	cmd, client, err := e.startACP(ctx, handler)
+	// The process outlives ctx by acpCancelGrace so session/cancel can stop it cleanly.
+	procCtx, stopProc := graceContext(ctx, acpCancelGrace)
+	defer stopProc()
+	cmd, client, err := e.startACP(procCtx, handler)
 	if err != nil {
 		return err
 	}
@@ -242,13 +250,26 @@ func (e *ACPExecutor) Run(ctx context.Context, request Request, sink Sink) error
 	}
 
 	var promptResult map[string]any
-	if err := client.Call(ctx, "session/prompt", map[string]any{
+	promptDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = client.write(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": session.SessionID}})
+		case <-promptDone:
+		}
+	}()
+	err = client.Call(procCtx, "session/prompt", map[string]any{
 		"sessionId": session.SessionID,
 		"prompt": []map[string]any{{
 			"type": "text",
 			"text": acpCrowInput(request),
 		}},
-	}, &promptResult); err != nil {
+	}, &promptResult)
+	close(promptDone)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
 		return fmt.Errorf("ACP session/prompt failed: %w", err)
 	}
 	message := strings.TrimSpace(assistantBuffer.String())
@@ -266,6 +287,9 @@ func (e *ACPExecutor) Run(ctx context.Context, request Request, sink Sink) error
 
 func (e *ACPExecutor) startACP(ctx context.Context, handler func(context.Context, acpRPCEnvelope)) (*exec.Cmd, *acpClient, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-lc", e.command)
+	// Own process group, so cancelling also stops the agent's child processes.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 	cmd.Dir = resolveACPCwd()
 	env := append(os.Environ(), "CROW_EXECUTOR_ID="+e.id)
 	for key, value := range e.env {
@@ -463,9 +487,26 @@ func stopACPProcess(cmd *exec.Cmd, client *acpClient) {
 		client.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcessGroup(cmd)
 		_ = cmd.Wait()
 	}
+}
+
+func killProcessGroup(cmd *exec.Cmd) error {
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		return cmd.Process.Kill()
+	}
+	return nil
+}
+
+// graceContext is cancelled `grace` after parent is, or when stop is called.
+func graceContext(parent context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+	stop := context.AfterFunc(parent, func() {
+		timer := time.AfterFunc(grace, cancel)
+		context.AfterFunc(ctx, func() { timer.Stop() })
+	})
+	return ctx, func() { stop(); cancel() }
 }
 
 func discardOrLogACPStderr(ctx context.Context, reader io.Reader) {

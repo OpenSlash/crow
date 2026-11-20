@@ -51,6 +51,8 @@ type server struct {
 	warnings     []string
 	approvals    map[string]chan bool
 	taskWatchers map[string]map[chan *crowv1.TaskEvent]struct{}
+	// cancels holds the cancel func of each running task.
+	cancels map[string]context.CancelFunc
 }
 
 func newServer(store *store.Store) *server {
@@ -72,6 +74,7 @@ func newServer(store *store.Store) *server {
 		warnings:     warnings,
 		approvals:    map[string]chan bool{},
 		taskWatchers: map[string]map[chan *crowv1.TaskEvent]struct{}{},
+		cancels:      map[string]context.CancelFunc{},
 	}
 }
 
@@ -321,9 +324,19 @@ func (s *server) CreateTask(ctx context.Context, req *connect.Request[crowv1.Cre
 		Message:      command,
 		ActiveTaskId: task.Id,
 	}
+	taskCtx, cancel := context.WithCancel(context.Background())
+	s.cancels[task.Id] = cancel
 	s.mu.Unlock()
 
-	go s.runTask(context.Background(), task, command)
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.cancels, task.Id)
+			s.mu.Unlock()
+			cancel()
+		}()
+		s.runTask(taskCtx, task, command)
+	}()
 
 	return connect.NewResponse(task), nil
 }
@@ -365,6 +378,16 @@ func (s *server) runTask(ctx context.Context, task *crowv1.Task, command string)
 		Kind:    task.Kind,
 		Command: command,
 	}, s); err != nil {
+		if ctx.Err() != nil {
+			_ = s.ApplyExecutorEvent(context.WithoutCancel(ctx), task.Id, executor.Event{
+				Type:     "task.cancelled",
+				Title:    "Task cancelled",
+				Message:  "Stopped by the user.",
+				Status:   "cancelled",
+				Subtitle: "Cancelled",
+			})
+			return
+		}
 		_ = s.ApplyExecutorEvent(ctx, task.Id, executor.Event{
 			Type:     "task.failed",
 			Title:    "Executor failed",
@@ -493,6 +516,8 @@ func (s *server) RequestApproval(ctx context.Context, taskID string, request exe
 
 	select {
 	case <-ctx.Done():
+		// Clear the prompt so the island does not keep asking for a cancelled task.
+		_, _ = s.store.DecideApproval(approvalID, false, "cancelled")
 		return false, ctx.Err()
 	case approved := <-waiter:
 		return approved, nil
@@ -553,6 +578,22 @@ func (s *server) GetTask(ctx context.Context, req *connect.Request[crowv1.GetTas
 		Events:          events,
 		PendingApproval: approval,
 	}), nil
+}
+
+func (s *server) CancelTask(ctx context.Context, req *connect.Request[crowv1.CancelTaskRequest]) (*connect.Response[crowv1.Task], error) {
+	taskID := req.Msg.GetTaskId()
+	s.mu.Lock()
+	cancel := s.cancels[taskID]
+	s.mu.Unlock()
+	if cancel == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("task is not running"))
+	}
+	cancel()
+	task, _, _, err := s.store.GetTask(taskID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("task not found"))
+	}
+	return connect.NewResponse(task), nil
 }
 
 func (s *server) ListTasks(ctx context.Context, req *connect.Request[crowv1.ListTasksRequest]) (*connect.Response[crowv1.ListTasksResponse], error) {

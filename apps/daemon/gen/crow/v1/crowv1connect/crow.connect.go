@@ -55,6 +55,8 @@ const (
 	TaskServiceListTasksProcedure = "/crow.v1.TaskService/ListTasks"
 	// TaskServiceWatchTaskProcedure is the fully-qualified name of the TaskService's WatchTask RPC.
 	TaskServiceWatchTaskProcedure = "/crow.v1.TaskService/WatchTask"
+	// TaskServiceCancelTaskProcedure is the fully-qualified name of the TaskService's CancelTask RPC.
+	TaskServiceCancelTaskProcedure = "/crow.v1.TaskService/CancelTask"
 	// VoiceServiceStartVoiceSessionProcedure is the fully-qualified name of the VoiceService's
 	// StartVoiceSession RPC.
 	VoiceServiceStartVoiceSessionProcedure = "/crow.v1.VoiceService/StartVoiceSession"
@@ -180,6 +182,8 @@ type TaskServiceClient interface {
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.TaskDetail], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	WatchTask(context.Context, *connect.Request[v1.WatchTaskRequest]) (*connect.ServerStreamForClient[v1.TaskEvent], error)
+	// Stops a running task. The executor is cancelled and the task ends as "cancelled".
+	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.Task], error)
 }
 
 // NewTaskServiceClient constructs a client for the crow.v1.TaskService service. By default, it uses
@@ -217,6 +221,12 @@ func NewTaskServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(taskServiceMethods.ByName("WatchTask")),
 			connect.WithClientOptions(opts...),
 		),
+		cancelTask: connect.NewClient[v1.CancelTaskRequest, v1.Task](
+			httpClient,
+			baseURL+TaskServiceCancelTaskProcedure,
+			connect.WithSchema(taskServiceMethods.ByName("CancelTask")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -226,6 +236,7 @@ type taskServiceClient struct {
 	getTask    *connect.Client[v1.GetTaskRequest, v1.TaskDetail]
 	listTasks  *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
 	watchTask  *connect.Client[v1.WatchTaskRequest, v1.TaskEvent]
+	cancelTask *connect.Client[v1.CancelTaskRequest, v1.Task]
 }
 
 // CreateTask calls crow.v1.TaskService.CreateTask.
@@ -248,12 +259,19 @@ func (c *taskServiceClient) WatchTask(ctx context.Context, req *connect.Request[
 	return c.watchTask.CallServerStream(ctx, req)
 }
 
+// CancelTask calls crow.v1.TaskService.CancelTask.
+func (c *taskServiceClient) CancelTask(ctx context.Context, req *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.Task], error) {
+	return c.cancelTask.CallUnary(ctx, req)
+}
+
 // TaskServiceHandler is an implementation of the crow.v1.TaskService service.
 type TaskServiceHandler interface {
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.Task], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.TaskDetail], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	WatchTask(context.Context, *connect.Request[v1.WatchTaskRequest], *connect.ServerStream[v1.TaskEvent]) error
+	// Stops a running task. The executor is cancelled and the task ends as "cancelled".
+	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.Task], error)
 }
 
 // NewTaskServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -287,6 +305,12 @@ func NewTaskServiceHandler(svc TaskServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(taskServiceMethods.ByName("WatchTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	taskServiceCancelTaskHandler := connect.NewUnaryHandler(
+		TaskServiceCancelTaskProcedure,
+		svc.CancelTask,
+		connect.WithSchema(taskServiceMethods.ByName("CancelTask")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/crow.v1.TaskService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case TaskServiceCreateTaskProcedure:
@@ -297,6 +321,8 @@ func NewTaskServiceHandler(svc TaskServiceHandler, opts ...connect.HandlerOption
 			taskServiceListTasksHandler.ServeHTTP(w, r)
 		case TaskServiceWatchTaskProcedure:
 			taskServiceWatchTaskHandler.ServeHTTP(w, r)
+		case TaskServiceCancelTaskProcedure:
+			taskServiceCancelTaskHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -320,6 +346,10 @@ func (UnimplementedTaskServiceHandler) ListTasks(context.Context, *connect.Reque
 
 func (UnimplementedTaskServiceHandler) WatchTask(context.Context, *connect.Request[v1.WatchTaskRequest], *connect.ServerStream[v1.TaskEvent]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.TaskService.WatchTask is not implemented"))
+}
+
+func (UnimplementedTaskServiceHandler) CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.Task], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.TaskService.CancelTask is not implemented"))
 }
 
 // VoiceServiceClient is a client for the crow.v1.VoiceService service.

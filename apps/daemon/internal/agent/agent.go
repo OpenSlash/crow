@@ -130,6 +130,9 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (R
 	base := RespondResult{Model: provider.Model(), Provider: provider.Name()}
 
 	for step := 0; step < h.maxSteps; step++ {
+		if err := ctx.Err(); err != nil {
+			return RespondResult{}, err
+		}
 		if err := ev.activity(Activity{Kind: ActivityThinking, Label: "Thinking"}); err != nil {
 			return RespondResult{}, err
 		}
@@ -150,6 +153,10 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (R
 
 		messages = append(messages, llm.Message{Role: "assistant", Content: resp.Text, ToolCalls: resp.ToolCalls})
 		for _, call := range resp.ToolCalls {
+			// A cancelled turn skips pending tools; a tool already running finishes.
+			if err := ctx.Err(); err != nil {
+				return RespondResult{}, err
+			}
 			result := runTool(ctx, tools, call, ev)
 			if result.Handoff != nil {
 				return h.handoff(base, resp.Text, *result.Handoff, ev)

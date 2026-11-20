@@ -466,6 +466,12 @@ final class CrowRPCClient {
         ])
     }
 
+    func cancelTask(taskId: String) async throws -> CrowTask {
+        try await unary("/crow.v1.TaskService/CancelTask", body: [
+            "taskId": taskId
+        ])
+    }
+
     func watchTask(taskId: String) throws -> AsyncThrowingStream<TaskEvent, Error> {
         guard let url = URL(string: session.baseURL + "/crow.v1.TaskService/WatchTask") else {
             throw NSError(domain: "CrowRPCClient", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid daemon URL"])
@@ -726,6 +732,21 @@ final class CrowAppModel: ObservableObject {
                 approvalError = error.localizedDescription
             }
             isBusy = false
+        }
+    }
+
+    /// Stops the active task if it is still running.
+    func cancelActiveTask() {
+        guard let taskID = activeTaskID else { return }
+        Swift.Task {
+            do {
+                guard let client else { return }
+                _ = try await client.cancelTask(taskId: taskID)
+                statusText = "Stopping task"
+                await refresh()
+            } catch {
+                detailText = error.localizedDescription
+            }
         }
     }
 
@@ -2752,6 +2773,7 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Show Crow", action: #selector(showWindow), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Run Agent Smoke", action: #selector(runAgentSmoke), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Stop Task", action: #selector(stopTask), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Crow", action: #selector(quit), keyEquivalent: "q"))
         for item in menu.items {
@@ -2775,6 +2797,10 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
     @objc private func runAgentSmoke() {
         showWindow()
         model.createTask(command: "用一句话回答：8+9 等于几", mode: "agent")
+    }
+
+    @objc private func stopTask() {
+        model.cancelActiveTask()
     }
 
     @objc private func quit() {

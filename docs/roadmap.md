@@ -42,11 +42,12 @@ Crow supports two ways to reach model services. Users pick one in Settings.
 - [x] Inject `PROFILE.md` into the system prompt; tools `memory_search`, `memory_read`, `memory_write`
 - [x] Settings: view folder, turn memory off, clear
 
-## Phase 3 — Interruption
+## Phase 3 — Interruption ✅
 
-- [ ] Talk key cancels TTS playback, the streaming reply and pending tool steps
-- [ ] Proto: `TaskService.CancelTask`; propagate context cancel to the agent loop and ACP executor
-- [ ] Actions already in progress (a click, a key sequence) finish; held keys are released at once
+- [x] Talk key cancels TTS playback, the streaming reply and pending tool steps (barge-in while Crow is busy; a delegated Codex task keeps running)
+- [x] Proto: `TaskService.CancelTask`; propagate context cancel to the agent loop and ACP executor (`session/cancel`, then the process group is killed after a 3 s grace)
+- [x] A tool step already running finishes; pending ones are skipped. Releasing held keys lands with computer use (Phase 5)
+- [x] Stop a running task from the menu bar ("Stop Task")
 
 ## Phase 4 — Approval policy
 

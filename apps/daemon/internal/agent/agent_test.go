@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,5 +187,32 @@ func TestMemoryToolsAndProfile(t *testing.T) {
 	last := p.requests[len(p.requests)-1]
 	if strings.Contains(last.System, "Alex") || len(last.Tools) != 2 {
 		t.Fatalf("memory off but system = %q tools = %d", last.System, len(last.Tools))
+	}
+}
+
+type countingTool struct{ runs *int }
+
+func (countingTool) Spec() llm.Tool {
+	return llm.Tool{Name: "count", Parameters: map[string]any{"type": "object"}}
+}
+func (countingTool) Activity() Activity { return Activity{Kind: ActivityRunning, Label: "Counting"} }
+func (t countingTool) Run(context.Context, json.RawMessage) (ToolResult, error) {
+	*t.runs++
+	return ToolResult{Content: "ok"}, nil
+}
+
+func TestCancelSkipsPendingTools(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	runs := 0
+	p := &scriptedProvider{responses: []llm.Response{{ToolCalls: []llm.ToolCall{{ID: "a", Name: "count"}, {ID: "b", Name: "count"}}}}}
+	h := NewHandler(func() (llm.Provider, error) { return p, nil }, 0, countingTool{&runs})
+	_, err := h.Respond(ctx, RespondRequest{Input: "q"}, Events{Activity: func(a Activity) error {
+		if a.Kind == ActivityRunning {
+			cancel() // user interrupts while the first tool starts
+		}
+		return nil
+	}})
+	if !errors.Is(err, context.Canceled) || runs != 1 || len(p.requests) != 1 {
+		t.Fatalf("err = %v runs = %d requests = %d", err, runs, len(p.requests))
 	}
 }

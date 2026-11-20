@@ -3082,6 +3082,7 @@ final class CrowIslandView: NSView {
     private var voiceStreamingSpeaker: CrowOpenAIStreamingTTSSpeaker?
     private var voiceSpeechBuffer = ""
     private var voiceSpeechQueue: [String] = []
+    private var voiceAgentStream: CrowAgentStream?
     private var isVoiceSpeechInputFinished = false
     private var didStartVoiceSpeechOutput = false
     private var shouldContinueAfterVoiceSpeech = false
@@ -3379,10 +3380,36 @@ final class CrowIslandView: NSView {
                 finishVoiceCapture()
             } else if isAwaitingVoiceConfirmation {
                 confirmVoiceCommand()
+            } else if isVoiceAgentBusy {
+                // Barge-in: stop Crow and listen. A delegated Codex task keeps running.
+                interruptVoiceAgent()
+                isVoiceConversationActive = true
+                beginVoiceCapture()
             }
             return
         }
         wakeVoicePanel()
+    }
+
+    /// Crow is waiting on the model or speaking.
+    private var isVoiceAgentBusy: Bool {
+        voiceAgentStream != nil
+            || voiceResponseSpeaker != nil
+            || voiceStreamingSpeaker != nil
+            || voiceResponseSynthesizer.isSpeaking
+            || !voiceSpeechQueue.isEmpty
+    }
+
+    /// Stops the in-flight turn (pending tool steps are skipped) and any speech.
+    private func interruptVoiceAgent() {
+        CrowMacLog("voice agent interrupted phase=\(voiceAgentPhase)")
+        voiceAgentStream?.cancel()
+        voiceAgentStream = nil
+        cancelAutoClose()
+        cancelContinueListening()
+        resetVoiceAgentSpeechOutput(stopPlayback: true)
+        voiceAgentPhase = ""
+        needsDisplay = true
     }
 
     private func wakeVoicePanel() {
@@ -3649,6 +3676,8 @@ final class CrowIslandView: NSView {
         cancelNoSpeechClose()
         cancelRetryListening()
         stopStreamingRecognition(cancel: true)
+        voiceAgentStream?.cancel()
+        voiceAgentStream = nil
         resetVoiceAgentSpeechOutput(stopPlayback: true)
         voiceResponseSpeaker?.stop()
         voiceResponseSpeaker = nil
@@ -3879,7 +3908,8 @@ final class CrowIslandView: NSView {
     private func respondToVoiceWithCrowAgent(text: String) {
         // Set once the turn has started; a retry after that could repeat tool side effects.
         let started = VoiceTurnFlag()
-        CrowAgent.respondStream(input: text, onDelta: { [weak self] delta in
+        voiceAgentStream?.cancel()
+        voiceAgentStream = CrowAgent.respondStream(input: text, onDelta: { [weak self] delta in
             DispatchQueue.main.async {
                 guard let self else { return }
                 started.value = true
@@ -3902,6 +3932,7 @@ final class CrowIslandView: NSView {
         }, completion: { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.voiceAgentStream = nil
                 switch result {
                 case .success(let response):
                     let answer = response.text.trimmingCharacters(in: .whitespacesAndNewlines)

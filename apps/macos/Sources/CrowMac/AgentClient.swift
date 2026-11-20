@@ -85,18 +85,21 @@ enum CrowAgent {
         }.resume()
     }
 
+    /// Streams a turn. Cancelling the returned handle stops the turn on the server
+    /// (pending tool steps are skipped) and suppresses the completion.
+    @discardableResult
     static func respondStream(
         input: String,
         onDelta: @escaping @Sendable (String) -> Void,
         onActivity: @escaping @Sendable (CrowAgentActivity) -> Void = { _ in },
         completion: @escaping Completion
-    ) {
+    ) -> CrowAgentStream {
         let endpoint: Endpoint
         do {
             endpoint = try Endpoint.resolve(path: "/v1/agent/respond-stream")
         } catch {
             completion(.failure(error))
-            return
+            return CrowAgentStream(delegate: nil)
         }
 
         var request = endpoint.request
@@ -115,6 +118,7 @@ enum CrowAgent {
         let session = URLSession(configuration: endpoint.sessionConfiguration, delegate: delegate, delegateQueue: nil)
         delegate.attach(session: session)
         session.dataTask(with: request).resume()
+        return CrowAgentStream(delegate: delegate)
     }
 
     fileprivate static func agentError(code: Int, _ message: String) -> NSError {
@@ -168,6 +172,18 @@ enum CrowAgent {
     }
 }
 
+final class CrowAgentStream: @unchecked Sendable {
+    private let delegate: StreamDelegate?
+
+    fileprivate init(delegate: StreamDelegate?) {
+        self.delegate = delegate
+    }
+
+    func cancel() {
+        delegate?.cancel()
+    }
+}
+
 /// Parses the SSE stream: `delta` {text}, `activity` {kind, label}, `done` CrowAgentResponse, `error` {code, message}.
 private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let onDelta: @Sendable (String) -> Void
@@ -175,6 +191,7 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked
     private let completion: CrowAgent.Completion
     private var buffer = ""
     private var finished = false
+    private let lock = NSLock()
     private var session: URLSession?
 
     init(
@@ -189,6 +206,14 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked
 
     func attach(session: URLSession) {
         self.session = session
+    }
+
+    /// Closing the connection cancels the request context in the daemon.
+    func cancel() {
+        lock.lock()
+        finished = true
+        lock.unlock()
+        session?.invalidateAndCancel()
     }
 
     func urlSession(
@@ -226,8 +251,11 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked
     }
 
     private func finish(_ result: Result<CrowAgentResponse, Error>) {
-        guard !finished else { return }
+        lock.lock()
+        let alreadyFinished = finished
         finished = true
+        lock.unlock()
+        guard !alreadyFinished else { return }
         completion(result)
     }
 
@@ -244,6 +272,10 @@ private final class StreamDelegate: NSObject, URLSessionDataDelegate, @unchecked
     }
 
     private func consume(block: String) {
+        lock.lock()
+        let isFinished = finished
+        lock.unlock()
+        guard !isFinished else { return }
         var event = "message"
         var dataLines: [String] = []
         for rawLine in block.components(separatedBy: "\n") {
