@@ -5,20 +5,78 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // openAIProvider speaks the OpenAI Chat Completions API, which most providers implement.
 type openAIProvider struct{ client }
 
+// openAIQuirks are request changes a model turned out to need. Newer OpenAI models
+// reject max_tokens, or tools together with reasoning in Chat Completions, while
+// other OpenAI-compatible providers still expect the classic fields. Rather than
+// keeping a list of model names, the provider learns them from the 400 errors,
+// once per base URL and model.
+type openAIQuirks struct {
+	completionTokens bool // send max_completion_tokens instead of max_tokens
+	noReasoning      bool // send reasoning_effort "none" so tools are allowed
+	noTemperature    bool // omit temperature
+}
+
+var learnedQuirks sync.Map // baseURL|model -> openAIQuirks
+
+// learn updates q from a request error and reports whether a retry may succeed.
+func (q *openAIQuirks) learn(err error) bool {
+	msg := err.Error()
+	switch {
+	case !q.completionTokens && strings.Contains(msg, "max_completion_tokens"):
+		q.completionTokens = true
+	case !q.noReasoning && strings.Contains(msg, "reasoning_effort to 'none'"):
+		q.noReasoning = true
+	case !q.noTemperature && strings.Contains(msg, "'temperature'"):
+		q.noTemperature = true
+	default:
+		return false
+	}
+	return true
+}
+
 func (p *openAIProvider) Stream(ctx context.Context, req Request, onDelta func(string) error) (Response, error) {
+	key := p.baseURL + "|" + p.model
+	var quirks openAIQuirks
+	if v, ok := learnedQuirks.Load(key); ok {
+		quirks = v.(openAIQuirks)
+	}
+	for attempt := 0; ; attempt++ {
+		streamed := false
+		resp, err := p.streamOnce(ctx, req, quirks, func(text string) error {
+			streamed = true
+			return onDelta(text)
+		})
+		if err == nil || streamed || attempt >= 3 || !quirks.learn(err) {
+			return resp, err
+		}
+		learnedQuirks.Store(key, quirks)
+	}
+}
+
+func (p *openAIProvider) streamOnce(ctx context.Context, req Request, quirks openAIQuirks, onDelta func(string) error) (Response, error) {
 	body := map[string]any{
-		"model":       p.model,
-		"messages":    openAIMessages(req),
-		"temperature": req.Temperature,
-		"stream":      true,
+		"model":    p.model,
+		"messages": openAIMessages(req),
+		"stream":   true,
+	}
+	if !quirks.noTemperature {
+		body["temperature"] = req.Temperature
+	}
+	if quirks.noReasoning {
+		body["reasoning_effort"] = "none"
 	}
 	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
+		if quirks.completionTokens {
+			body["max_completion_tokens"] = req.MaxTokens
+		} else {
+			body["max_tokens"] = req.MaxTokens
+		}
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))

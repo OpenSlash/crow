@@ -250,3 +250,41 @@ func TestToolResultImages(t *testing.T) {
 		t.Fatalf("plain result = %v", results[1])
 	}
 }
+
+func TestOpenAILearnsModelQuirks(t *testing.T) {
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		switch {
+		case body["max_tokens"] != nil:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."}}`))
+		case body["tools"] != nil && body["reasoning_effort"] == nil:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Function tools with reasoning_effort are not supported for m in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."}}`))
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+		}
+	}))
+	defer server.Close()
+	p, err := New(Config{Provider: "custom", BaseURL: server.URL + "/v1", Model: "quirky-1", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Messages: []Message{{Role: "user", Content: "hi"}}, MaxTokens: 50, Tools: []Tool{{Name: "noop", Parameters: map[string]any{"type": "object"}}}}
+	resp, err := p.Stream(context.Background(), req, func(string) error { return nil })
+	if err != nil || resp.Text != "ok" || len(bodies) != 3 {
+		t.Fatalf("resp = %+v err = %v attempts = %d", resp, err, len(bodies))
+	}
+	// Learned once: the next request is right the first time.
+	bodies = nil
+	if _, err := p.Stream(context.Background(), req, func(string) error { return nil }); err != nil || len(bodies) != 1 {
+		t.Fatalf("second request attempts = %d err = %v", len(bodies), err)
+	}
+	if bodies[0]["max_completion_tokens"] == nil || bodies[0]["reasoning_effort"] != "none" {
+		t.Fatalf("body = %v", bodies[0])
+	}
+}
