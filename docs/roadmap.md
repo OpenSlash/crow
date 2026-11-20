@@ -49,12 +49,13 @@ Crow supports two ways to reach model services. Users pick one in Settings.
 - [x] A tool step already running finishes; pending ones are skipped. Releasing held keys lands with computer use (Phase 5)
 - [x] Stop a running task from the menu bar ("Stop Task")
 
-## Phase 4 — Approval policy
+## Phase 4 — Approval policy ✅
 
-- [ ] Policies: `every_turn` / `before_acting` / `once` (grant TTL, default 30 min) / `never`
-- [ ] Scopes: `computer`, `terminal`, `codex`, `file_write`; terminal input always asks separately
-- [ ] Persist grants with expiry in SQLite; show active grants in Settings with revoke
-- [ ] Approval prompt on the island; system dialog when the island is hidden
+- [x] Policies: `every_turn` / `before_acting` (once per task) / `once` (grant TTL, default 30 min, `CROW_APPROVAL_GRANT_MINUTES`) / `never`
+- [x] Scopes: `computer`, `terminal`, `codex`, `file_write`; terminal cannot be set to `never` (raised to `once`). Defaults: terminal `every_turn`, others `before_acting`
+- [x] ACP permission requests map by tool kind: execute → terminal, edit/delete/move → file_write, others → codex
+- [x] Persist grants with expiry in SQLite; Settings shows active grants with Revoke All
+- [x] Approval prompt on the island (existing). No system-dialog fallback: the island is always on screen
 
 ## Phase 5 — Computer use
 

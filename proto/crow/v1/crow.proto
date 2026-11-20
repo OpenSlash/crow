@@ -27,6 +27,10 @@ service VoiceService {
 service ApprovalService {
   rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
   rpc DecideApproval(DecideApprovalRequest) returns (Approval);
+  // Active time-limited grants from the "once" policy.
+  rpc ListGrants(ListGrantsRequest) returns (ListGrantsResponse);
+  // Revokes grants for one scope, or all when scope is empty.
+  rpc RevokeGrants(RevokeGrantsRequest) returns (ListGrantsResponse);
 }
 
 service SettingsService {
@@ -158,6 +162,23 @@ message ListPendingApprovalsResponse {
   repeated Approval approvals = 1;
 }
 
+message Grant {
+  int64 id = 1;
+  string scope = 2;
+  string created_at = 3;
+  string expires_at = 4;
+}
+
+message ListGrantsRequest {}
+
+message ListGrantsResponse {
+  repeated Grant grants = 1;
+}
+
+message RevokeGrantsRequest {
+  string scope = 1;
+}
+
 message DecideApprovalRequest {
   string approval_id = 1;
   bool approved = 2;
@@ -203,4 +224,9 @@ message Settings {
   bool llm_api_key_set = 19;
   // Long-term memory (profile in prompt + memory tools). Defaults to on.
   bool memory_enabled = 20;
+  // Approval policy per scope: every_turn, before_acting, once or never.
+  string approval_computer = 21;
+  string approval_terminal = 22;
+  string approval_codex = 23;
+  string approval_file_write = 24;
 }

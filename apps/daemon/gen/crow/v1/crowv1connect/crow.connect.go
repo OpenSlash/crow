@@ -72,6 +72,12 @@ const (
 	// ApprovalServiceDecideApprovalProcedure is the fully-qualified name of the ApprovalService's
 	// DecideApproval RPC.
 	ApprovalServiceDecideApprovalProcedure = "/crow.v1.ApprovalService/DecideApproval"
+	// ApprovalServiceListGrantsProcedure is the fully-qualified name of the ApprovalService's
+	// ListGrants RPC.
+	ApprovalServiceListGrantsProcedure = "/crow.v1.ApprovalService/ListGrants"
+	// ApprovalServiceRevokeGrantsProcedure is the fully-qualified name of the ApprovalService's
+	// RevokeGrants RPC.
+	ApprovalServiceRevokeGrantsProcedure = "/crow.v1.ApprovalService/RevokeGrants"
 	// SettingsServiceGetSettingsProcedure is the fully-qualified name of the SettingsService's
 	// GetSettings RPC.
 	SettingsServiceGetSettingsProcedure = "/crow.v1.SettingsService/GetSettings"
@@ -478,6 +484,10 @@ func (UnimplementedVoiceServiceHandler) CancelVoiceSession(context.Context, *con
 type ApprovalServiceClient interface {
 	ListPendingApprovals(context.Context, *connect.Request[v1.ListPendingApprovalsRequest]) (*connect.Response[v1.ListPendingApprovalsResponse], error)
 	DecideApproval(context.Context, *connect.Request[v1.DecideApprovalRequest]) (*connect.Response[v1.Approval], error)
+	// Active time-limited grants from the "once" policy.
+	ListGrants(context.Context, *connect.Request[v1.ListGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error)
+	// Revokes grants for one scope, or all when scope is empty.
+	RevokeGrants(context.Context, *connect.Request[v1.RevokeGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error)
 }
 
 // NewApprovalServiceClient constructs a client for the crow.v1.ApprovalService service. By default,
@@ -503,6 +513,18 @@ func NewApprovalServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(approvalServiceMethods.ByName("DecideApproval")),
 			connect.WithClientOptions(opts...),
 		),
+		listGrants: connect.NewClient[v1.ListGrantsRequest, v1.ListGrantsResponse](
+			httpClient,
+			baseURL+ApprovalServiceListGrantsProcedure,
+			connect.WithSchema(approvalServiceMethods.ByName("ListGrants")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeGrants: connect.NewClient[v1.RevokeGrantsRequest, v1.ListGrantsResponse](
+			httpClient,
+			baseURL+ApprovalServiceRevokeGrantsProcedure,
+			connect.WithSchema(approvalServiceMethods.ByName("RevokeGrants")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -510,6 +532,8 @@ func NewApprovalServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 type approvalServiceClient struct {
 	listPendingApprovals *connect.Client[v1.ListPendingApprovalsRequest, v1.ListPendingApprovalsResponse]
 	decideApproval       *connect.Client[v1.DecideApprovalRequest, v1.Approval]
+	listGrants           *connect.Client[v1.ListGrantsRequest, v1.ListGrantsResponse]
+	revokeGrants         *connect.Client[v1.RevokeGrantsRequest, v1.ListGrantsResponse]
 }
 
 // ListPendingApprovals calls crow.v1.ApprovalService.ListPendingApprovals.
@@ -522,10 +546,24 @@ func (c *approvalServiceClient) DecideApproval(ctx context.Context, req *connect
 	return c.decideApproval.CallUnary(ctx, req)
 }
 
+// ListGrants calls crow.v1.ApprovalService.ListGrants.
+func (c *approvalServiceClient) ListGrants(ctx context.Context, req *connect.Request[v1.ListGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error) {
+	return c.listGrants.CallUnary(ctx, req)
+}
+
+// RevokeGrants calls crow.v1.ApprovalService.RevokeGrants.
+func (c *approvalServiceClient) RevokeGrants(ctx context.Context, req *connect.Request[v1.RevokeGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error) {
+	return c.revokeGrants.CallUnary(ctx, req)
+}
+
 // ApprovalServiceHandler is an implementation of the crow.v1.ApprovalService service.
 type ApprovalServiceHandler interface {
 	ListPendingApprovals(context.Context, *connect.Request[v1.ListPendingApprovalsRequest]) (*connect.Response[v1.ListPendingApprovalsResponse], error)
 	DecideApproval(context.Context, *connect.Request[v1.DecideApprovalRequest]) (*connect.Response[v1.Approval], error)
+	// Active time-limited grants from the "once" policy.
+	ListGrants(context.Context, *connect.Request[v1.ListGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error)
+	// Revokes grants for one scope, or all when scope is empty.
+	RevokeGrants(context.Context, *connect.Request[v1.RevokeGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error)
 }
 
 // NewApprovalServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -547,12 +585,28 @@ func NewApprovalServiceHandler(svc ApprovalServiceHandler, opts ...connect.Handl
 		connect.WithSchema(approvalServiceMethods.ByName("DecideApproval")),
 		connect.WithHandlerOptions(opts...),
 	)
+	approvalServiceListGrantsHandler := connect.NewUnaryHandler(
+		ApprovalServiceListGrantsProcedure,
+		svc.ListGrants,
+		connect.WithSchema(approvalServiceMethods.ByName("ListGrants")),
+		connect.WithHandlerOptions(opts...),
+	)
+	approvalServiceRevokeGrantsHandler := connect.NewUnaryHandler(
+		ApprovalServiceRevokeGrantsProcedure,
+		svc.RevokeGrants,
+		connect.WithSchema(approvalServiceMethods.ByName("RevokeGrants")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/crow.v1.ApprovalService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ApprovalServiceListPendingApprovalsProcedure:
 			approvalServiceListPendingApprovalsHandler.ServeHTTP(w, r)
 		case ApprovalServiceDecideApprovalProcedure:
 			approvalServiceDecideApprovalHandler.ServeHTTP(w, r)
+		case ApprovalServiceListGrantsProcedure:
+			approvalServiceListGrantsHandler.ServeHTTP(w, r)
+		case ApprovalServiceRevokeGrantsProcedure:
+			approvalServiceRevokeGrantsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -568,6 +622,14 @@ func (UnimplementedApprovalServiceHandler) ListPendingApprovals(context.Context,
 
 func (UnimplementedApprovalServiceHandler) DecideApproval(context.Context, *connect.Request[v1.DecideApprovalRequest]) (*connect.Response[v1.Approval], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ApprovalService.DecideApproval is not implemented"))
+}
+
+func (UnimplementedApprovalServiceHandler) ListGrants(context.Context, *connect.Request[v1.ListGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ApprovalService.ListGrants is not implemented"))
+}
+
+func (UnimplementedApprovalServiceHandler) RevokeGrants(context.Context, *connect.Request[v1.RevokeGrantsRequest]) (*connect.Response[v1.ListGrantsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ApprovalService.RevokeGrants is not implemented"))
 }
 
 // SettingsServiceClient is a client for the crow.v1.SettingsService service.

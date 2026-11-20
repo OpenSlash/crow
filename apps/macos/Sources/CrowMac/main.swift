@@ -177,9 +177,17 @@ struct RuntimeSettings: Codable {
     var llmModel: String = ""
     var llmApiKeySet: Bool = false
     var memoryEnabled: Bool = true
+    var approvalComputer: String = ""
+    var approvalTerminal: String = ""
+    var approvalCodex: String = ""
+    var approvalFileWrite: String = ""
 
     enum CodingKeys: String, CodingKey {
         case memoryEnabled
+        case approvalComputer
+        case approvalTerminal
+        case approvalCodex
+        case approvalFileWrite
         case agentMode
         case llmProvider
         case llmBaseUrl
@@ -214,6 +222,10 @@ struct RuntimeSettings: Codable {
         llmModel = try container.decodeIfPresent(String.self, forKey: .llmModel) ?? ""
         llmApiKeySet = try container.decodeIfPresent(Bool.self, forKey: .llmApiKeySet) ?? false
         memoryEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? false
+        approvalComputer = try container.decodeIfPresent(String.self, forKey: .approvalComputer) ?? ""
+        approvalTerminal = try container.decodeIfPresent(String.self, forKey: .approvalTerminal) ?? ""
+        approvalCodex = try container.decodeIfPresent(String.self, forKey: .approvalCodex) ?? ""
+        approvalFileWrite = try container.decodeIfPresent(String.self, forKey: .approvalFileWrite) ?? ""
     }
 
     /// `apiKey` is write-only: pass it only when the user entered or switched to a key.
@@ -226,6 +238,10 @@ struct RuntimeSettings: Codable {
                 "llmModel": llmModel,
                 "llmApiKey": apiKey ?? "",
                 "memoryEnabled": memoryEnabled,
+                "approvalComputer": approvalComputer,
+                "approvalTerminal": approvalTerminal,
+                "approvalCodex": approvalCodex,
+                "approvalFileWrite": approvalFileWrite,
                 "sttLanguage": sttLanguage,
                 "ttsProvider": ttsProvider,
                 "ttsVoice": ttsVoice,
@@ -245,6 +261,10 @@ struct RuntimeSettings: Codable {
             "CROW_OPENAI_TTS_VOICE": ttsVoice,
             "CROW_TTS_STREAMING": ttsStreaming ? "true" : "false",
             "CROW_MEMORY_ENABLED": memoryEnabled ? "true" : "false",
+            "CROW_APPROVAL_COMPUTER": approvalComputer,
+            "CROW_APPROVAL_TERMINAL": approvalTerminal,
+            "CROW_APPROVAL_CODEX": approvalCodex,
+            "CROW_APPROVAL_FILE_WRITE": approvalFileWrite,
             "CROW_ISLAND_SCREEN": islandScreen,
             "CROW_ISLAND_HOTKEY": islandHotkey,
             "CROW_ISLAND_IDLE_CLOSE_SECONDS": islandIdleCloseSeconds,
@@ -254,6 +274,76 @@ struct RuntimeSettings: Codable {
             "CROW_LLM_BASE_URL": llmBaseUrl,
             "CROW_LLM_MODEL": llmModel
         ].filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+}
+
+struct ApprovalGrant: Decodable {
+    let id: String
+    let scope: String
+    let createdAt: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, scope, createdAt, expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // proto3 JSON encodes int64 as a string.
+        id = (try? container.decode(String.self, forKey: .id)) ?? "\((try? container.decode(Int64.self, forKey: .id)) ?? 0)"
+        scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+        expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt) ?? ""
+    }
+}
+
+struct ApprovalGrantList: Decodable {
+    let grants: [ApprovalGrant]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        grants = try container.decodeIfPresent([ApprovalGrant].self, forKey: .grants) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case grants
+    }
+}
+
+/// Approval policy choices, matching the daemon's approval package.
+enum CrowApprovalScope: String, CaseIterable {
+    case computer, terminal, codex
+    case fileWrite = "file_write"
+
+    var title: String {
+        switch self {
+        case .computer: return "Computer use"
+        case .terminal: return "Terminal"
+        case .codex: return "Codex"
+        case .fileWrite: return "File changes"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .computer: return "cursorarrow.click"
+        case .terminal: return "terminal"
+        case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .fileWrite: return "doc.badge.gearshape"
+        }
+    }
+
+    var defaultPolicy: String { self == .terminal ? "every_turn" : "before_acting" }
+
+    /// Terminal commands always need some approval, so "never" is not offered.
+    var policies: [(String, String)] {
+        let all = [
+            ("every_turn", "Ask every time"),
+            ("before_acting", "Ask once per task"),
+            ("once", "Allow for 30 min"),
+            ("never", "Don't ask")
+        ]
+        return self == .terminal ? all.filter { $0.0 != "never" } : all
     }
 }
 
@@ -552,6 +642,14 @@ final class CrowRPCClient {
         ])
     }
 
+    func listGrants() async throws -> ApprovalGrantList {
+        try await unary("/crow.v1.ApprovalService/ListGrants", body: [:])
+    }
+
+    func revokeGrants(scope: String = "") async throws -> ApprovalGrantList {
+        try await unary("/crow.v1.ApprovalService/RevokeGrants", body: ["scope": scope])
+    }
+
     func getSettings() async throws -> RuntimeSettings {
         try await unary("/crow.v1.SettingsService/GetSettings", body: [:])
     }
@@ -628,6 +726,7 @@ final class CrowAppModel: ObservableObject {
     @Published var activeApproval: Approval?
     @Published var approvalError = ""
     @Published var settings = RuntimeSettings()
+    @Published var grants: [ApprovalGrant] = []
     @Published var settingsStatus = "Settings not loaded"
     @Published var executorsSnapshot = ExecutorsSnapshot(executors: [], configDirs: [], warnings: nil)
     @Published var executorsStatus = "Executors not loaded"
@@ -735,6 +834,18 @@ final class CrowAppModel: ObservableObject {
         }
     }
 
+    func revokeAllGrants() {
+        Swift.Task {
+            do {
+                guard let client else { return }
+                grants = try await client.revokeGrants().grants
+                settingsStatus = "Approvals revoked"
+            } catch {
+                settingsStatus = error.localizedDescription
+            }
+        }
+    }
+
     /// Stops the active task if it is still running.
     func cancelActiveTask() {
         guard let taskID = activeTaskID else { return }
@@ -758,6 +869,7 @@ final class CrowAppModel: ObservableObject {
             guard let client else { return }
             settings = try await client.getSettings()
             settings.islandAvatarStyle = CrowEnvironment.value("CROW_ISLAND_AVATAR_STYLE") ?? settings.islandAvatarStyle
+            grants = (try? await client.listGrants().grants) ?? grants
             await loadExecutors()
             settingsStatus = "Settings loaded"
         } catch {
@@ -1289,6 +1401,10 @@ final class CrowWindowController: NSWindowController {
     private let llmAPIKeyField = NSSecureTextField(string: "")
     private let testModelButton = NSButton(title: "Test", target: nil, action: nil)
     private let memoryEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let approvalPopUps: [CrowApprovalScope: NSPopUpButton] = Dictionary(
+        uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0, NSPopUpButton(frame: .zero, pullsDown: false)) }
+    )
+    private let grantsLabel = NSTextField(labelWithString: "")
     private let executorSummaryLabel = NSTextField(labelWithString: "")
     private let executorDetailLabel = NSTextField(labelWithString: "")
     private let executorListStack = NSStackView()
@@ -1588,6 +1704,28 @@ final class CrowWindowController: NSWindowController {
         let clearMemory = NSButton(title: "Clear…", target: self, action: #selector(clearMemory))
         clearMemory.bezelStyle = .rounded
         mainCard.addArrangedSubview(settingsActionsRow(symbol: "folder", title: "Files", buttons: [openMemory, clearMemory]))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "hand.raised", title: "Approvals", subtitle: "When Crow asks before acting"))
+        mainCard.addArrangedSubview(makeSeparator())
+        for scope in CrowApprovalScope.allCases {
+            guard let popUp = approvalPopUps[scope] else { continue }
+            popUp.removeAllItems()
+            for (value, title) in scope.policies {
+                popUp.addItem(withTitle: title)
+                popUp.lastItem?.representedObject = value
+            }
+            mainCard.addArrangedSubview(settingsPopUpRow(symbol: scope.symbol, title: scope.title, popUp: popUp))
+            mainCard.addArrangedSubview(makeSeparator())
+        }
+        grantsLabel.textColor = .secondaryLabelColor
+        grantsLabel.font = .systemFont(ofSize: 12)
+        let revokeGrants = NSButton(title: "Revoke All", target: self, action: #selector(revokeApprovalGrants))
+        revokeGrants.bezelStyle = .rounded
+        let grantsRow = settingsActionsRow(symbol: "clock.badge.checkmark", title: "Active grants", buttons: [revokeGrants])
+        if let row = grantsRow as? NSStackView {
+            row.insertArrangedSubview(grantsLabel, at: max(0, row.arrangedSubviews.count - 1))
+        }
+        mainCard.addArrangedSubview(grantsRow)
         mainCard.addArrangedSubview(makeSeparator())
         mainCard.addArrangedSubview(settingsSectionHeader(symbol: "waveform", title: "Voice", subtitle: "Audio output"))
         mainCard.addArrangedSubview(makeSeparator())
@@ -2239,6 +2377,10 @@ final class CrowWindowController: NSWindowController {
         settings.ttsVoice = selectedTTSVoice()
         settings.ttsStreaming = streamTTSButton.state == .on
         settings.memoryEnabled = memoryEnabledButton.state == .on
+        settings.approvalComputer = selectedApprovalPolicy(.computer)
+        settings.approvalTerminal = selectedApprovalPolicy(.terminal)
+        settings.approvalCodex = selectedApprovalPolicy(.codex)
+        settings.approvalFileWrite = selectedApprovalPolicy(.fileWrite)
         settings.islandScreen = islandScreenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandHotkey = islandHotkeyRecorder.hotKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandIdleCloseSeconds = islandIdleCloseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2259,6 +2401,25 @@ final class CrowWindowController: NSWindowController {
         var settings = model.settings
         settings.islandAvatarStyle = style
         try? model.persistRuntimeSettings(settings)
+    }
+
+    private func selectedApprovalPolicy(_ scope: CrowApprovalScope) -> String {
+        guard let popUp = approvalPopUps[scope] else { return scope.defaultPolicy }
+        return selectedPopUpValue(popUp, fallback: scope.defaultPolicy)
+    }
+
+    private func grantsSummary(_ grants: [ApprovalGrant]) -> String {
+        guard !grants.isEmpty else { return "None" }
+        let formatter = ISO8601DateFormatter()
+        let titles = Dictionary(uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0.rawValue, $0.title) })
+        return grants.map { grant in
+            let minutes = formatter.date(from: grant.expiresAt).map { max(1, Int($0.timeIntervalSinceNow / 60)) } ?? 0
+            return "\(titles[grant.scope] ?? grant.scope) · \(minutes) min"
+        }.joined(separator: ", ")
+    }
+
+    @objc private func revokeApprovalGrants() {
+        model.revokeAllGrants()
     }
 
     private var memoryDirectory: URL {
@@ -2531,6 +2692,19 @@ final class CrowWindowController: NSWindowController {
         }
         streamTTSButton.state = settings.ttsStreaming ? .on : .off
         memoryEnabledButton.state = settings.memoryEnabled ? .on : .off
+        for (scope, value) in [
+            (CrowApprovalScope.computer, settings.approvalComputer),
+            (.terminal, settings.approvalTerminal),
+            (.codex, settings.approvalCodex),
+            (.fileWrite, settings.approvalFileWrite)
+        ] {
+            if let popUp = approvalPopUps[scope] {
+                // Terminal "never" is stored as-is but applied as "once" by the daemon.
+                let shown = scope == .terminal && value == "never" ? "once" : value
+                selectPopUp(popUp, value: shown, fallback: scope.defaultPolicy)
+            }
+        }
+        grantsLabel.stringValue = grantsSummary(model.grants)
         settingsStatusLabel.stringValue = model.settingsStatus
     }
 

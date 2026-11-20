@@ -92,6 +92,13 @@ func (s *Store) Migrate() error {
 			FOREIGN KEY(approval_id) REFERENCES approval_requests(id),
 			FOREIGN KEY(task_id) REFERENCES tasks(id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS approval_grants (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_approval_grants_scope_expires ON approval_grants(scope, expires_at);`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -391,4 +398,50 @@ func (s *Store) DecideApproval(approvalID string, approved bool, comment string)
 	approval.Status = status
 	approval.DecidedAt = decidedAt
 	return approval, tx.Commit()
+}
+
+// Grant times are stored as UTC RFC 3339 so they compare as strings.
+func grantTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+func (s *Store) AddGrant(scope string, createdAt, expiresAt time.Time) error {
+	_, err := s.db.Exec(`INSERT INTO approval_grants (scope, created_at, expires_at) VALUES (?, ?, ?)`,
+		scope, grantTime(createdAt), grantTime(expiresAt))
+	return err
+}
+
+func (s *Store) HasActiveGrant(scope string, now time.Time) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM approval_grants WHERE scope = ? AND expires_at > ?`, scope, grantTime(now)).Scan(&n)
+	return n > 0, err
+}
+
+// ActiveGrants lists unexpired grants and deletes expired ones.
+func (s *Store) ActiveGrants(now time.Time) ([]*crowv1.Grant, error) {
+	if _, err := s.db.Exec(`DELETE FROM approval_grants WHERE expires_at <= ?`, grantTime(now)); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT id, scope, created_at, expires_at FROM approval_grants ORDER BY expires_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	grants := []*crowv1.Grant{}
+	for rows.Next() {
+		grant := &crowv1.Grant{}
+		if err := rows.Scan(&grant.Id, &grant.Scope, &grant.CreatedAt, &grant.ExpiresAt); err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	return grants, rows.Err()
+}
+
+// RevokeGrants deletes grants for scope, or all grants when scope is empty.
+func (s *Store) RevokeGrants(scope string) error {
+	if scope == "" {
+		_, err := s.db.Exec(`DELETE FROM approval_grants`)
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM approval_grants WHERE scope = ?`, scope)
+	return err
 }

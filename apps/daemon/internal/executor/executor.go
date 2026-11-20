@@ -32,6 +32,8 @@ type Event struct {
 }
 
 type ApprovalRequest struct {
+	// Scope selects the approval policy: computer, terminal, codex or file_write.
+	Scope       string
 	Tool        string
 	Action      string
 	Preview     string

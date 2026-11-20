@@ -24,6 +24,7 @@ import (
 	crowv1 "github.com/crow/crow/apps/daemon/gen/crow/v1"
 	"github.com/crow/crow/apps/daemon/gen/crow/v1/crowv1connect"
 	"github.com/crow/crow/apps/daemon/internal/agent"
+	"github.com/crow/crow/apps/daemon/internal/approval"
 	"github.com/crow/crow/apps/daemon/internal/config"
 	"github.com/crow/crow/apps/daemon/internal/executor"
 	"github.com/crow/crow/apps/daemon/internal/llm"
@@ -53,6 +54,7 @@ type server struct {
 	taskWatchers map[string]map[chan *crowv1.TaskEvent]struct{}
 	// cancels holds the cancel func of each running task.
 	cancels map[string]context.CancelFunc
+	gate    *approval.Gate
 }
 
 func newServer(store *store.Store) *server {
@@ -61,6 +63,7 @@ func newServer(store *store.Store) *server {
 		log.Printf("executor adapter warning: %s", warning)
 	}
 	return &server{
+		gate:      approval.NewGate(store, approvalPolicyFromEnv, approvalGrantTTL),
 		store:     store,
 		startedAt: time.Now(),
 		state: &crowv1.RuntimeState{
@@ -334,6 +337,7 @@ func (s *server) CreateTask(ctx context.Context, req *connect.Request[crowv1.Cre
 			delete(s.cancels, task.Id)
 			s.mu.Unlock()
 			cancel()
+			s.gate.ForgetTask(task.Id)
 		}()
 		s.runTask(taskCtx, task, command)
 	}()
@@ -464,6 +468,51 @@ func (s *server) ApplyExecutorEvent(ctx context.Context, taskID string, event ex
 }
 
 func (s *server) RequestApproval(ctx context.Context, taskID string, request executor.ApprovalRequest) (bool, error) {
+	scope := approval.Scope(firstNonEmpty(request.Scope, string(approval.ScopeCodex)))
+	if allowed, policy := s.gate.Allowed(taskID, scope); allowed {
+		_ = s.ApplyExecutorEvent(ctx, taskID, executor.Event{
+			Type:     "approval.auto",
+			Title:    "Allowed by approval policy",
+			Message:  fmt.Sprintf("%s (%s: %s)", firstNonEmpty(request.Action, request.Tool, "Action"), scope, policy),
+			Status:   "running",
+			Subtitle: "Approved",
+		})
+		return true, nil
+	}
+	approved, err := s.askApproval(ctx, taskID, request)
+	if err == nil {
+		if recordErr := s.gate.Record(taskID, scope, approved); recordErr != nil {
+			log.Printf("record approval grant failed: %v", recordErr)
+		}
+	}
+	return approved, err
+}
+
+func approvalPolicyFromEnv(scope approval.Scope) approval.Policy {
+	return approval.ParsePolicy(scope, os.Getenv("CROW_APPROVAL_"+strings.ToUpper(string(scope))))
+}
+
+func approvalGrantTTL() time.Duration {
+	return time.Duration(intEnv("CROW_APPROVAL_GRANT_MINUTES", int(approval.DefaultGrantTTL/time.Minute))) * time.Minute
+}
+
+func (s *server) ListGrants(ctx context.Context, req *connect.Request[crowv1.ListGrantsRequest]) (*connect.Response[crowv1.ListGrantsResponse], error) {
+	grants, err := s.store.ActiveGrants(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&crowv1.ListGrantsResponse{Grants: grants}), nil
+}
+
+func (s *server) RevokeGrants(ctx context.Context, req *connect.Request[crowv1.RevokeGrantsRequest]) (*connect.Response[crowv1.ListGrantsResponse], error) {
+	if err := s.store.RevokeGrants(strings.TrimSpace(req.Msg.GetScope())); err != nil {
+		return nil, err
+	}
+	return s.ListGrants(ctx, connect.NewRequest(&crowv1.ListGrantsRequest{}))
+}
+
+// askApproval shows an approval prompt and waits for the user's decision.
+func (s *server) askApproval(ctx context.Context, taskID string, request executor.ApprovalRequest) (bool, error) {
 	now := time.Now().Format(time.RFC3339)
 	approvalID := fmt.Sprintf("approval-%d", time.Now().UnixNano())
 	waiter := make(chan bool, 1)
@@ -733,6 +782,10 @@ func settingsFromEnv() *crowv1.Settings {
 		LlmModel:               firstNonEmptyEnv("CROW_LLM_MODEL"),
 		LlmApiKey:              firstNonEmptyEnv("CROW_LLM_API_KEY"),
 		MemoryEnabled:          boolEnvDefault("CROW_MEMORY_ENABLED", true),
+		ApprovalComputer:       firstNonEmptyEnv("CROW_APPROVAL_COMPUTER"),
+		ApprovalTerminal:       firstNonEmptyEnv("CROW_APPROVAL_TERMINAL"),
+		ApprovalCodex:          firstNonEmptyEnv("CROW_APPROVAL_CODEX"),
+		ApprovalFileWrite:      firstNonEmptyEnv("CROW_APPROVAL_FILE_WRITE"),
 	}
 	applyRuntimeSettingsFile(settings)
 	applySettingsToEnv(settings)
@@ -757,6 +810,10 @@ func applySettingsToEnv(settings *crowv1.Settings) {
 	setEnvIfPresent("CROW_LLM_MODEL", settings.GetLlmModel())
 	setEnvIfPresent("CROW_LLM_API_KEY", settings.GetLlmApiKey())
 	_ = os.Setenv("CROW_MEMORY_ENABLED", boolString(settings.GetMemoryEnabled()))
+	setEnvIfPresent("CROW_APPROVAL_COMPUTER", settings.GetApprovalComputer())
+	setEnvIfPresent("CROW_APPROVAL_TERMINAL", settings.GetApprovalTerminal())
+	setEnvIfPresent("CROW_APPROVAL_CODEX", settings.GetApprovalCodex())
+	setEnvIfPresent("CROW_APPROVAL_FILE_WRITE", settings.GetApprovalFileWrite())
 }
 
 func setEnvIfPresent(key string, value string) {
@@ -847,6 +904,16 @@ func applyRuntimeSettingValues(settings *crowv1.Settings, values map[string]stri
 	}
 	if value, ok := values["CROW_MEMORY_ENABLED"]; ok {
 		settings.MemoryEnabled = parseBoolSetting(value, settings.MemoryEnabled)
+	}
+	for key, field := range map[string]*string{
+		"CROW_APPROVAL_COMPUTER":   &settings.ApprovalComputer,
+		"CROW_APPROVAL_TERMINAL":   &settings.ApprovalTerminal,
+		"CROW_APPROVAL_CODEX":      &settings.ApprovalCodex,
+		"CROW_APPROVAL_FILE_WRITE": &settings.ApprovalFileWrite,
+	} {
+		if value := strings.TrimSpace(values[key]); value != "" {
+			*field = value
+		}
 	}
 }
 

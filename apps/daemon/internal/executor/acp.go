@@ -408,6 +408,7 @@ func (e *ACPExecutor) handleACPPermission(ctx context.Context, taskID string, si
 	var err error
 	if approvalSink, ok := sink.(ApprovalSink); ok {
 		approved, err = approvalSink.RequestApproval(ctx, taskID, ApprovalRequest{
+			Scope:       acpApprovalScope(getString(toolCall, "kind")),
 			Tool:        firstNonEmpty(getString(toolCall, "name"), "acp"),
 			Action:      title,
 			Preview:     preview,
@@ -758,6 +759,17 @@ func acpUsageText(update map[string]any) string {
 		return "Usage updated."
 	}
 	return "Context " + used + " / " + size
+}
+
+func acpApprovalScope(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "execute":
+		return "terminal"
+	case "edit", "delete", "move":
+		return "file_write"
+	default:
+		return "codex"
+	}
 }
 
 func acpRiskLevel(kind string) int32 {
