@@ -67,8 +67,13 @@ Off by default: Settings → "Let Crow use this Mac" shows a risk notice before 
   - [x] Permission checks and onboarding (Screen Recording, Accessibility) in Settings
   - [x] `zoom` (re-capture a region at full detail), `windows` (list app windows), `focus` (raise an app or one of its windows)
   - [x] Results include the pointer position and the front app/window; actions can skip the screenshot (`screenshot: false`)
+  - [x] `elements`: numbered accessibility controls of the front window and menu bar, drawn on the screenshot (Set-of-Mark); `click` by element uses AXPress; `set_value` fills text fields
+  - [x] Hardening: one computer task at a time, type ≤ 2000 chars and stops when the user types, refuses secure input, AX timeouts, layout-aware shortcuts
+  - [x] MCP server (`crowctl mcp`) exposes the same tool to other agents through `ComputerService.Perform`, under Crow's switch, approvals and see-only mode
   - [ ] Hold keys or mouse buttons for a duration; multiple displays
-  - [ ] Run the input engine in a separate process
+  - [ ] Optional grounding model (e.g. UI-TARS) for coordinate-free targeting
+  - [ ] Background key delivery to a process without focusing it
+  - [ ] Run the input engine in a separate process (needs its own TCC permissions)
 - [x] Bridge: CrowMac subscribes to `ComputerService.WatchCommands` and replies with `SubmitResult`
 - [x] Daemon: `use_computer` hand-off creates a `computer` task; the computer executor runs its own tool loop and approvals (scope `computer`); tool results carry screenshots (OpenAI: follow-up user image message; Anthropic: image blocks in `tool_result`); only the 2 latest screenshots are kept
 - [ ] Anthropic native `computer_toolset_20260801` for Claude (all providers use the generic `computer` function tool for now)

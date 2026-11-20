@@ -25,6 +25,11 @@ type sessionFile struct {
 }
 
 func main() {
+	// `crowctl mcp` serves computer use to MCP clients over stdio.
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		mcpMain()
+		return
+	}
 	command := flag.String("create-task", "", "create a task")
 	mode := flag.String("mode", "cli", "task mode")
 	taskID := flag.String("task-id", "", "show task detail")

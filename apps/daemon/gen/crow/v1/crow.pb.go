@@ -676,6 +676,137 @@ func (*SubmitComputerResultResponse) Descriptor() ([]byte, []int) {
 	return file_crow_v1_crow_proto_rawDescGZIP(), []int{10}
 }
 
+type PerformComputerActionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Task that groups an external session's actions and approvals; empty starts a new one.
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// The computer tool's arguments, e.g. {"action":"click","element":3}.
+	ArgsJson string `protobuf:"bytes,2,opt,name=args_json,json=argsJson,proto3" json:"args_json,omitempty"`
+	// Shown as the task title when a new task starts, e.g. the client's name.
+	Client        string `protobuf:"bytes,3,opt,name=client,proto3" json:"client,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PerformComputerActionRequest) Reset() {
+	*x = PerformComputerActionRequest{}
+	mi := &file_crow_v1_crow_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PerformComputerActionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PerformComputerActionRequest) ProtoMessage() {}
+
+func (x *PerformComputerActionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_crow_v1_crow_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PerformComputerActionRequest.ProtoReflect.Descriptor instead.
+func (*PerformComputerActionRequest) Descriptor() ([]byte, []int) {
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PerformComputerActionRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *PerformComputerActionRequest) GetArgsJson() string {
+	if x != nil {
+		return x.ArgsJson
+	}
+	return ""
+}
+
+func (x *PerformComputerActionRequest) GetClient() string {
+	if x != nil {
+		return x.Client
+	}
+	return ""
+}
+
+type PerformComputerActionResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	TaskId         string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Text           string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	Image          []byte                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	ImageMediaType string                 `protobuf:"bytes,4,opt,name=image_media_type,json=imageMediaType,proto3" json:"image_media_type,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PerformComputerActionResponse) Reset() {
+	*x = PerformComputerActionResponse{}
+	mi := &file_crow_v1_crow_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PerformComputerActionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PerformComputerActionResponse) ProtoMessage() {}
+
+func (x *PerformComputerActionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_crow_v1_crow_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PerformComputerActionResponse.ProtoReflect.Descriptor instead.
+func (*PerformComputerActionResponse) Descriptor() ([]byte, []int) {
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PerformComputerActionResponse) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *PerformComputerActionResponse) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *PerformComputerActionResponse) GetImage() []byte {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+func (x *PerformComputerActionResponse) GetImageMediaType() string {
+	if x != nil {
+		return x.ImageMediaType
+	}
+	return ""
+}
+
 type CancelTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -685,7 +816,7 @@ type CancelTaskRequest struct {
 
 func (x *CancelTaskRequest) Reset() {
 	*x = CancelTaskRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[11]
+	mi := &file_crow_v1_crow_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -697,7 +828,7 @@ func (x *CancelTaskRequest) String() string {
 func (*CancelTaskRequest) ProtoMessage() {}
 
 func (x *CancelTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[11]
+	mi := &file_crow_v1_crow_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -710,7 +841,7 @@ func (x *CancelTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelTaskRequest.ProtoReflect.Descriptor instead.
 func (*CancelTaskRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{11}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CancelTaskRequest) GetTaskId() string {
@@ -730,7 +861,7 @@ type ListTasksRequest struct {
 
 func (x *ListTasksRequest) Reset() {
 	*x = ListTasksRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[12]
+	mi := &file_crow_v1_crow_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -742,7 +873,7 @@ func (x *ListTasksRequest) String() string {
 func (*ListTasksRequest) ProtoMessage() {}
 
 func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[12]
+	mi := &file_crow_v1_crow_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -755,7 +886,7 @@ func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksRequest.ProtoReflect.Descriptor instead.
 func (*ListTasksRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{12}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListTasksRequest) GetLimit() int32 {
@@ -781,7 +912,7 @@ type ListTasksResponse struct {
 
 func (x *ListTasksResponse) Reset() {
 	*x = ListTasksResponse{}
-	mi := &file_crow_v1_crow_proto_msgTypes[13]
+	mi := &file_crow_v1_crow_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -793,7 +924,7 @@ func (x *ListTasksResponse) String() string {
 func (*ListTasksResponse) ProtoMessage() {}
 
 func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[13]
+	mi := &file_crow_v1_crow_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -806,7 +937,7 @@ func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksResponse.ProtoReflect.Descriptor instead.
 func (*ListTasksResponse) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{13}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListTasksResponse) GetTasks() []*Task {
@@ -825,7 +956,7 @@ type WatchTaskRequest struct {
 
 func (x *WatchTaskRequest) Reset() {
 	*x = WatchTaskRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[14]
+	mi := &file_crow_v1_crow_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -837,7 +968,7 @@ func (x *WatchTaskRequest) String() string {
 func (*WatchTaskRequest) ProtoMessage() {}
 
 func (x *WatchTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[14]
+	mi := &file_crow_v1_crow_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -850,7 +981,7 @@ func (x *WatchTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchTaskRequest.ProtoReflect.Descriptor instead.
 func (*WatchTaskRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{14}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *WatchTaskRequest) GetTaskId() string {
@@ -875,7 +1006,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_crow_v1_crow_proto_msgTypes[15]
+	mi := &file_crow_v1_crow_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -887,7 +1018,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[15]
+	mi := &file_crow_v1_crow_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -900,7 +1031,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{15}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Task) GetId() string {
@@ -963,7 +1094,7 @@ type TaskDetail struct {
 
 func (x *TaskDetail) Reset() {
 	*x = TaskDetail{}
-	mi := &file_crow_v1_crow_proto_msgTypes[16]
+	mi := &file_crow_v1_crow_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -975,7 +1106,7 @@ func (x *TaskDetail) String() string {
 func (*TaskDetail) ProtoMessage() {}
 
 func (x *TaskDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[16]
+	mi := &file_crow_v1_crow_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -988,7 +1119,7 @@ func (x *TaskDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskDetail.ProtoReflect.Descriptor instead.
 func (*TaskDetail) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{16}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TaskDetail) GetTask() *Task {
@@ -1026,7 +1157,7 @@ type TaskEvent struct {
 
 func (x *TaskEvent) Reset() {
 	*x = TaskEvent{}
-	mi := &file_crow_v1_crow_proto_msgTypes[17]
+	mi := &file_crow_v1_crow_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1038,7 +1169,7 @@ func (x *TaskEvent) String() string {
 func (*TaskEvent) ProtoMessage() {}
 
 func (x *TaskEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[17]
+	mi := &file_crow_v1_crow_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1051,7 +1182,7 @@ func (x *TaskEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskEvent.ProtoReflect.Descriptor instead.
 func (*TaskEvent) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{17}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *TaskEvent) GetId() string {
@@ -1106,7 +1237,7 @@ type StartVoiceSessionRequest struct {
 
 func (x *StartVoiceSessionRequest) Reset() {
 	*x = StartVoiceSessionRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[18]
+	mi := &file_crow_v1_crow_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1118,7 +1249,7 @@ func (x *StartVoiceSessionRequest) String() string {
 func (*StartVoiceSessionRequest) ProtoMessage() {}
 
 func (x *StartVoiceSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[18]
+	mi := &file_crow_v1_crow_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1131,7 +1262,7 @@ func (x *StartVoiceSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartVoiceSessionRequest.ProtoReflect.Descriptor instead.
 func (*StartVoiceSessionRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{18}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *StartVoiceSessionRequest) GetSource() string {
@@ -1159,7 +1290,7 @@ type VoiceSession struct {
 
 func (x *VoiceSession) Reset() {
 	*x = VoiceSession{}
-	mi := &file_crow_v1_crow_proto_msgTypes[19]
+	mi := &file_crow_v1_crow_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1171,7 +1302,7 @@ func (x *VoiceSession) String() string {
 func (*VoiceSession) ProtoMessage() {}
 
 func (x *VoiceSession) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[19]
+	mi := &file_crow_v1_crow_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1184,7 +1315,7 @@ func (x *VoiceSession) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoiceSession.ProtoReflect.Descriptor instead.
 func (*VoiceSession) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{19}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *VoiceSession) GetId() string {
@@ -1221,7 +1352,7 @@ type AudioChunk struct {
 
 func (x *AudioChunk) Reset() {
 	*x = AudioChunk{}
-	mi := &file_crow_v1_crow_proto_msgTypes[20]
+	mi := &file_crow_v1_crow_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1233,7 +1364,7 @@ func (x *AudioChunk) String() string {
 func (*AudioChunk) ProtoMessage() {}
 
 func (x *AudioChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[20]
+	mi := &file_crow_v1_crow_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1246,7 +1377,7 @@ func (x *AudioChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AudioChunk.ProtoReflect.Descriptor instead.
 func (*AudioChunk) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{20}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AudioChunk) GetSessionId() string {
@@ -1298,7 +1429,7 @@ type VoiceEvent struct {
 
 func (x *VoiceEvent) Reset() {
 	*x = VoiceEvent{}
-	mi := &file_crow_v1_crow_proto_msgTypes[21]
+	mi := &file_crow_v1_crow_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1310,7 +1441,7 @@ func (x *VoiceEvent) String() string {
 func (*VoiceEvent) ProtoMessage() {}
 
 func (x *VoiceEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[21]
+	mi := &file_crow_v1_crow_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1323,7 +1454,7 @@ func (x *VoiceEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoiceEvent.ProtoReflect.Descriptor instead.
 func (*VoiceEvent) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{21}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *VoiceEvent) GetId() string {
@@ -1377,7 +1508,7 @@ type CancelVoiceSessionRequest struct {
 
 func (x *CancelVoiceSessionRequest) Reset() {
 	*x = CancelVoiceSessionRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[22]
+	mi := &file_crow_v1_crow_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1389,7 +1520,7 @@ func (x *CancelVoiceSessionRequest) String() string {
 func (*CancelVoiceSessionRequest) ProtoMessage() {}
 
 func (x *CancelVoiceSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[22]
+	mi := &file_crow_v1_crow_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1402,7 +1533,7 @@ func (x *CancelVoiceSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelVoiceSessionRequest.ProtoReflect.Descriptor instead.
 func (*CancelVoiceSessionRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{22}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CancelVoiceSessionRequest) GetSessionId() string {
@@ -1421,7 +1552,7 @@ type CancelVoiceSessionResponse struct {
 
 func (x *CancelVoiceSessionResponse) Reset() {
 	*x = CancelVoiceSessionResponse{}
-	mi := &file_crow_v1_crow_proto_msgTypes[23]
+	mi := &file_crow_v1_crow_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1433,7 +1564,7 @@ func (x *CancelVoiceSessionResponse) String() string {
 func (*CancelVoiceSessionResponse) ProtoMessage() {}
 
 func (x *CancelVoiceSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[23]
+	mi := &file_crow_v1_crow_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1446,7 +1577,7 @@ func (x *CancelVoiceSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelVoiceSessionResponse.ProtoReflect.Descriptor instead.
 func (*CancelVoiceSessionResponse) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{23}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CancelVoiceSessionResponse) GetCancelled() bool {
@@ -1464,7 +1595,7 @@ type ListPendingApprovalsRequest struct {
 
 func (x *ListPendingApprovalsRequest) Reset() {
 	*x = ListPendingApprovalsRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[24]
+	mi := &file_crow_v1_crow_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1476,7 +1607,7 @@ func (x *ListPendingApprovalsRequest) String() string {
 func (*ListPendingApprovalsRequest) ProtoMessage() {}
 
 func (x *ListPendingApprovalsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[24]
+	mi := &file_crow_v1_crow_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1489,7 +1620,7 @@ func (x *ListPendingApprovalsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingApprovalsRequest.ProtoReflect.Descriptor instead.
 func (*ListPendingApprovalsRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{24}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{26}
 }
 
 type ListPendingApprovalsResponse struct {
@@ -1501,7 +1632,7 @@ type ListPendingApprovalsResponse struct {
 
 func (x *ListPendingApprovalsResponse) Reset() {
 	*x = ListPendingApprovalsResponse{}
-	mi := &file_crow_v1_crow_proto_msgTypes[25]
+	mi := &file_crow_v1_crow_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1513,7 +1644,7 @@ func (x *ListPendingApprovalsResponse) String() string {
 func (*ListPendingApprovalsResponse) ProtoMessage() {}
 
 func (x *ListPendingApprovalsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[25]
+	mi := &file_crow_v1_crow_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1526,7 +1657,7 @@ func (x *ListPendingApprovalsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingApprovalsResponse.ProtoReflect.Descriptor instead.
 func (*ListPendingApprovalsResponse) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{25}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListPendingApprovalsResponse) GetApprovals() []*Approval {
@@ -1548,7 +1679,7 @@ type Grant struct {
 
 func (x *Grant) Reset() {
 	*x = Grant{}
-	mi := &file_crow_v1_crow_proto_msgTypes[26]
+	mi := &file_crow_v1_crow_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1560,7 +1691,7 @@ func (x *Grant) String() string {
 func (*Grant) ProtoMessage() {}
 
 func (x *Grant) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[26]
+	mi := &file_crow_v1_crow_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1573,7 +1704,7 @@ func (x *Grant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Grant.ProtoReflect.Descriptor instead.
 func (*Grant) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{26}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Grant) GetId() int64 {
@@ -1612,7 +1743,7 @@ type ListGrantsRequest struct {
 
 func (x *ListGrantsRequest) Reset() {
 	*x = ListGrantsRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[27]
+	mi := &file_crow_v1_crow_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1624,7 +1755,7 @@ func (x *ListGrantsRequest) String() string {
 func (*ListGrantsRequest) ProtoMessage() {}
 
 func (x *ListGrantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[27]
+	mi := &file_crow_v1_crow_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1637,7 +1768,7 @@ func (x *ListGrantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListGrantsRequest.ProtoReflect.Descriptor instead.
 func (*ListGrantsRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{27}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{29}
 }
 
 type ListGrantsResponse struct {
@@ -1649,7 +1780,7 @@ type ListGrantsResponse struct {
 
 func (x *ListGrantsResponse) Reset() {
 	*x = ListGrantsResponse{}
-	mi := &file_crow_v1_crow_proto_msgTypes[28]
+	mi := &file_crow_v1_crow_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1661,7 +1792,7 @@ func (x *ListGrantsResponse) String() string {
 func (*ListGrantsResponse) ProtoMessage() {}
 
 func (x *ListGrantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[28]
+	mi := &file_crow_v1_crow_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1674,7 +1805,7 @@ func (x *ListGrantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListGrantsResponse.ProtoReflect.Descriptor instead.
 func (*ListGrantsResponse) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{28}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListGrantsResponse) GetGrants() []*Grant {
@@ -1693,7 +1824,7 @@ type RevokeGrantsRequest struct {
 
 func (x *RevokeGrantsRequest) Reset() {
 	*x = RevokeGrantsRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[29]
+	mi := &file_crow_v1_crow_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1705,7 +1836,7 @@ func (x *RevokeGrantsRequest) String() string {
 func (*RevokeGrantsRequest) ProtoMessage() {}
 
 func (x *RevokeGrantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[29]
+	mi := &file_crow_v1_crow_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1718,7 +1849,7 @@ func (x *RevokeGrantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeGrantsRequest.ProtoReflect.Descriptor instead.
 func (*RevokeGrantsRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{29}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RevokeGrantsRequest) GetScope() string {
@@ -1739,7 +1870,7 @@ type DecideApprovalRequest struct {
 
 func (x *DecideApprovalRequest) Reset() {
 	*x = DecideApprovalRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[30]
+	mi := &file_crow_v1_crow_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1751,7 +1882,7 @@ func (x *DecideApprovalRequest) String() string {
 func (*DecideApprovalRequest) ProtoMessage() {}
 
 func (x *DecideApprovalRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[30]
+	mi := &file_crow_v1_crow_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1764,7 +1895,7 @@ func (x *DecideApprovalRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecideApprovalRequest.ProtoReflect.Descriptor instead.
 func (*DecideApprovalRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{30}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *DecideApprovalRequest) GetApprovalId() string {
@@ -1806,7 +1937,7 @@ type Approval struct {
 
 func (x *Approval) Reset() {
 	*x = Approval{}
-	mi := &file_crow_v1_crow_proto_msgTypes[31]
+	mi := &file_crow_v1_crow_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1818,7 +1949,7 @@ func (x *Approval) String() string {
 func (*Approval) ProtoMessage() {}
 
 func (x *Approval) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[31]
+	mi := &file_crow_v1_crow_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1831,7 +1962,7 @@ func (x *Approval) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Approval.ProtoReflect.Descriptor instead.
 func (*Approval) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{31}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *Approval) GetId() string {
@@ -1912,7 +2043,7 @@ type GetSettingsRequest struct {
 
 func (x *GetSettingsRequest) Reset() {
 	*x = GetSettingsRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[32]
+	mi := &file_crow_v1_crow_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1924,7 +2055,7 @@ func (x *GetSettingsRequest) String() string {
 func (*GetSettingsRequest) ProtoMessage() {}
 
 func (x *GetSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[32]
+	mi := &file_crow_v1_crow_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1937,7 +2068,7 @@ func (x *GetSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSettingsRequest.ProtoReflect.Descriptor instead.
 func (*GetSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{32}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{34}
 }
 
 type SaveSettingsRequest struct {
@@ -1949,7 +2080,7 @@ type SaveSettingsRequest struct {
 
 func (x *SaveSettingsRequest) Reset() {
 	*x = SaveSettingsRequest{}
-	mi := &file_crow_v1_crow_proto_msgTypes[33]
+	mi := &file_crow_v1_crow_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1961,7 +2092,7 @@ func (x *SaveSettingsRequest) String() string {
 func (*SaveSettingsRequest) ProtoMessage() {}
 
 func (x *SaveSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[33]
+	mi := &file_crow_v1_crow_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1974,7 +2105,7 @@ func (x *SaveSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveSettingsRequest.ProtoReflect.Descriptor instead.
 func (*SaveSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{33}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SaveSettingsRequest) GetSettings() *Settings {
@@ -2018,7 +2149,7 @@ type Settings struct {
 
 func (x *Settings) Reset() {
 	*x = Settings{}
-	mi := &file_crow_v1_crow_proto_msgTypes[34]
+	mi := &file_crow_v1_crow_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2030,7 +2161,7 @@ func (x *Settings) String() string {
 func (*Settings) ProtoMessage() {}
 
 func (x *Settings) ProtoReflect() protoreflect.Message {
-	mi := &file_crow_v1_crow_proto_msgTypes[34]
+	mi := &file_crow_v1_crow_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2043,7 +2174,7 @@ func (x *Settings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Settings.ProtoReflect.Descriptor instead.
 func (*Settings) Descriptor() ([]byte, []int) {
-	return file_crow_v1_crow_proto_rawDescGZIP(), []int{34}
+	return file_crow_v1_crow_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *Settings) GetSttLanguage() string {
@@ -2235,7 +2366,16 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	"\x05width\x18\x06 \x01(\x05R\x05width\x12\x16\n" +
 	"\x06height\x18\a \x01(\x05R\x06height\x12\x12\n" +
 	"\x04text\x18\b \x01(\tR\x04text\"\x1e\n" +
-	"\x1cSubmitComputerResultResponse\",\n" +
+	"\x1cSubmitComputerResultResponse\"l\n" +
+	"\x1cPerformComputerActionRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
+	"\targs_json\x18\x02 \x01(\tR\bargsJson\x12\x16\n" +
+	"\x06client\x18\x03 \x01(\tR\x06client\"\x8c\x01\n" +
+	"\x1dPerformComputerActionResponse\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x12\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12\x14\n" +
+	"\x05image\x18\x03 \x01(\fR\x05image\x12(\n" +
+	"\x10image_media_type\x18\x04 \x01(\tR\x0eimageMediaType\",\n" +
 	"\x11CancelTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\"@\n" +
 	"\x10ListTasksRequest\x12\x14\n" +
@@ -2377,10 +2517,11 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	"\fVoiceService\x12M\n" +
 	"\x11StartVoiceSession\x12!.crow.v1.StartVoiceSessionRequest\x1a\x15.crow.v1.VoiceSession\x12;\n" +
 	"\vStreamAudio\x12\x13.crow.v1.AudioChunk\x1a\x13.crow.v1.VoiceEvent(\x010\x01\x12]\n" +
-	"\x12CancelVoiceSession\x12\".crow.v1.CancelVoiceSessionRequest\x1a#.crow.v1.CancelVoiceSessionResponse2\xb5\x01\n" +
+	"\x12CancelVoiceSession\x12\".crow.v1.CancelVoiceSessionRequest\x1a#.crow.v1.CancelVoiceSessionResponse2\x8f\x02\n" +
 	"\x0fComputerService\x12R\n" +
 	"\rWatchCommands\x12%.crow.v1.WatchComputerCommandsRequest\x1a\x18.crow.v1.ComputerCommand0\x01\x12N\n" +
-	"\fSubmitResult\x12\x17.crow.v1.ComputerResult\x1a%.crow.v1.SubmitComputerResultResponse2\xcd\x02\n" +
+	"\fSubmitResult\x12\x17.crow.v1.ComputerResult\x1a%.crow.v1.SubmitComputerResultResponse\x12X\n" +
+	"\aPerform\x12%.crow.v1.PerformComputerActionRequest\x1a&.crow.v1.PerformComputerActionResponse2\xcd\x02\n" +
 	"\x0fApprovalService\x12c\n" +
 	"\x14ListPendingApprovals\x12$.crow.v1.ListPendingApprovalsRequest\x1a%.crow.v1.ListPendingApprovalsResponse\x12C\n" +
 	"\x0eDecideApproval\x12\x1e.crow.v1.DecideApprovalRequest\x1a\x11.crow.v1.Approval\x12E\n" +
@@ -2403,97 +2544,101 @@ func file_crow_v1_crow_proto_rawDescGZIP() []byte {
 	return file_crow_v1_crow_proto_rawDescData
 }
 
-var file_crow_v1_crow_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_crow_v1_crow_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_crow_v1_crow_proto_goTypes = []any{
-	(*GetSnapshotRequest)(nil),           // 0: crow.v1.GetSnapshotRequest
-	(*WatchRuntimeRequest)(nil),          // 1: crow.v1.WatchRuntimeRequest
-	(*RuntimeSnapshot)(nil),              // 2: crow.v1.RuntimeSnapshot
-	(*RuntimeEvent)(nil),                 // 3: crow.v1.RuntimeEvent
-	(*RuntimeState)(nil),                 // 4: crow.v1.RuntimeState
-	(*CreateTaskRequest)(nil),            // 5: crow.v1.CreateTaskRequest
-	(*GetTaskRequest)(nil),               // 6: crow.v1.GetTaskRequest
-	(*WatchComputerCommandsRequest)(nil), // 7: crow.v1.WatchComputerCommandsRequest
-	(*ComputerCommand)(nil),              // 8: crow.v1.ComputerCommand
-	(*ComputerResult)(nil),               // 9: crow.v1.ComputerResult
-	(*SubmitComputerResultResponse)(nil), // 10: crow.v1.SubmitComputerResultResponse
-	(*CancelTaskRequest)(nil),            // 11: crow.v1.CancelTaskRequest
-	(*ListTasksRequest)(nil),             // 12: crow.v1.ListTasksRequest
-	(*ListTasksResponse)(nil),            // 13: crow.v1.ListTasksResponse
-	(*WatchTaskRequest)(nil),             // 14: crow.v1.WatchTaskRequest
-	(*Task)(nil),                         // 15: crow.v1.Task
-	(*TaskDetail)(nil),                   // 16: crow.v1.TaskDetail
-	(*TaskEvent)(nil),                    // 17: crow.v1.TaskEvent
-	(*StartVoiceSessionRequest)(nil),     // 18: crow.v1.StartVoiceSessionRequest
-	(*VoiceSession)(nil),                 // 19: crow.v1.VoiceSession
-	(*AudioChunk)(nil),                   // 20: crow.v1.AudioChunk
-	(*VoiceEvent)(nil),                   // 21: crow.v1.VoiceEvent
-	(*CancelVoiceSessionRequest)(nil),    // 22: crow.v1.CancelVoiceSessionRequest
-	(*CancelVoiceSessionResponse)(nil),   // 23: crow.v1.CancelVoiceSessionResponse
-	(*ListPendingApprovalsRequest)(nil),  // 24: crow.v1.ListPendingApprovalsRequest
-	(*ListPendingApprovalsResponse)(nil), // 25: crow.v1.ListPendingApprovalsResponse
-	(*Grant)(nil),                        // 26: crow.v1.Grant
-	(*ListGrantsRequest)(nil),            // 27: crow.v1.ListGrantsRequest
-	(*ListGrantsResponse)(nil),           // 28: crow.v1.ListGrantsResponse
-	(*RevokeGrantsRequest)(nil),          // 29: crow.v1.RevokeGrantsRequest
-	(*DecideApprovalRequest)(nil),        // 30: crow.v1.DecideApprovalRequest
-	(*Approval)(nil),                     // 31: crow.v1.Approval
-	(*GetSettingsRequest)(nil),           // 32: crow.v1.GetSettingsRequest
-	(*SaveSettingsRequest)(nil),          // 33: crow.v1.SaveSettingsRequest
-	(*Settings)(nil),                     // 34: crow.v1.Settings
+	(*GetSnapshotRequest)(nil),            // 0: crow.v1.GetSnapshotRequest
+	(*WatchRuntimeRequest)(nil),           // 1: crow.v1.WatchRuntimeRequest
+	(*RuntimeSnapshot)(nil),               // 2: crow.v1.RuntimeSnapshot
+	(*RuntimeEvent)(nil),                  // 3: crow.v1.RuntimeEvent
+	(*RuntimeState)(nil),                  // 4: crow.v1.RuntimeState
+	(*CreateTaskRequest)(nil),             // 5: crow.v1.CreateTaskRequest
+	(*GetTaskRequest)(nil),                // 6: crow.v1.GetTaskRequest
+	(*WatchComputerCommandsRequest)(nil),  // 7: crow.v1.WatchComputerCommandsRequest
+	(*ComputerCommand)(nil),               // 8: crow.v1.ComputerCommand
+	(*ComputerResult)(nil),                // 9: crow.v1.ComputerResult
+	(*SubmitComputerResultResponse)(nil),  // 10: crow.v1.SubmitComputerResultResponse
+	(*PerformComputerActionRequest)(nil),  // 11: crow.v1.PerformComputerActionRequest
+	(*PerformComputerActionResponse)(nil), // 12: crow.v1.PerformComputerActionResponse
+	(*CancelTaskRequest)(nil),             // 13: crow.v1.CancelTaskRequest
+	(*ListTasksRequest)(nil),              // 14: crow.v1.ListTasksRequest
+	(*ListTasksResponse)(nil),             // 15: crow.v1.ListTasksResponse
+	(*WatchTaskRequest)(nil),              // 16: crow.v1.WatchTaskRequest
+	(*Task)(nil),                          // 17: crow.v1.Task
+	(*TaskDetail)(nil),                    // 18: crow.v1.TaskDetail
+	(*TaskEvent)(nil),                     // 19: crow.v1.TaskEvent
+	(*StartVoiceSessionRequest)(nil),      // 20: crow.v1.StartVoiceSessionRequest
+	(*VoiceSession)(nil),                  // 21: crow.v1.VoiceSession
+	(*AudioChunk)(nil),                    // 22: crow.v1.AudioChunk
+	(*VoiceEvent)(nil),                    // 23: crow.v1.VoiceEvent
+	(*CancelVoiceSessionRequest)(nil),     // 24: crow.v1.CancelVoiceSessionRequest
+	(*CancelVoiceSessionResponse)(nil),    // 25: crow.v1.CancelVoiceSessionResponse
+	(*ListPendingApprovalsRequest)(nil),   // 26: crow.v1.ListPendingApprovalsRequest
+	(*ListPendingApprovalsResponse)(nil),  // 27: crow.v1.ListPendingApprovalsResponse
+	(*Grant)(nil),                         // 28: crow.v1.Grant
+	(*ListGrantsRequest)(nil),             // 29: crow.v1.ListGrantsRequest
+	(*ListGrantsResponse)(nil),            // 30: crow.v1.ListGrantsResponse
+	(*RevokeGrantsRequest)(nil),           // 31: crow.v1.RevokeGrantsRequest
+	(*DecideApprovalRequest)(nil),         // 32: crow.v1.DecideApprovalRequest
+	(*Approval)(nil),                      // 33: crow.v1.Approval
+	(*GetSettingsRequest)(nil),            // 34: crow.v1.GetSettingsRequest
+	(*SaveSettingsRequest)(nil),           // 35: crow.v1.SaveSettingsRequest
+	(*Settings)(nil),                      // 36: crow.v1.Settings
 }
 var file_crow_v1_crow_proto_depIdxs = []int32{
 	4,  // 0: crow.v1.RuntimeSnapshot.state:type_name -> crow.v1.RuntimeState
-	15, // 1: crow.v1.RuntimeSnapshot.recent_tasks:type_name -> crow.v1.Task
-	31, // 2: crow.v1.RuntimeSnapshot.pending_approvals:type_name -> crow.v1.Approval
+	17, // 1: crow.v1.RuntimeSnapshot.recent_tasks:type_name -> crow.v1.Task
+	33, // 2: crow.v1.RuntimeSnapshot.pending_approvals:type_name -> crow.v1.Approval
 	4,  // 3: crow.v1.RuntimeEvent.state:type_name -> crow.v1.RuntimeState
-	15, // 4: crow.v1.RuntimeEvent.task:type_name -> crow.v1.Task
-	17, // 5: crow.v1.RuntimeEvent.task_event:type_name -> crow.v1.TaskEvent
-	31, // 6: crow.v1.RuntimeEvent.approval:type_name -> crow.v1.Approval
-	15, // 7: crow.v1.ListTasksResponse.tasks:type_name -> crow.v1.Task
-	15, // 8: crow.v1.TaskDetail.task:type_name -> crow.v1.Task
-	17, // 9: crow.v1.TaskDetail.events:type_name -> crow.v1.TaskEvent
-	31, // 10: crow.v1.TaskDetail.pending_approval:type_name -> crow.v1.Approval
-	31, // 11: crow.v1.ListPendingApprovalsResponse.approvals:type_name -> crow.v1.Approval
-	26, // 12: crow.v1.ListGrantsResponse.grants:type_name -> crow.v1.Grant
-	34, // 13: crow.v1.SaveSettingsRequest.settings:type_name -> crow.v1.Settings
+	17, // 4: crow.v1.RuntimeEvent.task:type_name -> crow.v1.Task
+	19, // 5: crow.v1.RuntimeEvent.task_event:type_name -> crow.v1.TaskEvent
+	33, // 6: crow.v1.RuntimeEvent.approval:type_name -> crow.v1.Approval
+	17, // 7: crow.v1.ListTasksResponse.tasks:type_name -> crow.v1.Task
+	17, // 8: crow.v1.TaskDetail.task:type_name -> crow.v1.Task
+	19, // 9: crow.v1.TaskDetail.events:type_name -> crow.v1.TaskEvent
+	33, // 10: crow.v1.TaskDetail.pending_approval:type_name -> crow.v1.Approval
+	33, // 11: crow.v1.ListPendingApprovalsResponse.approvals:type_name -> crow.v1.Approval
+	28, // 12: crow.v1.ListGrantsResponse.grants:type_name -> crow.v1.Grant
+	36, // 13: crow.v1.SaveSettingsRequest.settings:type_name -> crow.v1.Settings
 	0,  // 14: crow.v1.CrowRuntimeService.GetSnapshot:input_type -> crow.v1.GetSnapshotRequest
 	1,  // 15: crow.v1.CrowRuntimeService.WatchRuntime:input_type -> crow.v1.WatchRuntimeRequest
 	5,  // 16: crow.v1.TaskService.CreateTask:input_type -> crow.v1.CreateTaskRequest
 	6,  // 17: crow.v1.TaskService.GetTask:input_type -> crow.v1.GetTaskRequest
-	12, // 18: crow.v1.TaskService.ListTasks:input_type -> crow.v1.ListTasksRequest
-	14, // 19: crow.v1.TaskService.WatchTask:input_type -> crow.v1.WatchTaskRequest
-	11, // 20: crow.v1.TaskService.CancelTask:input_type -> crow.v1.CancelTaskRequest
-	18, // 21: crow.v1.VoiceService.StartVoiceSession:input_type -> crow.v1.StartVoiceSessionRequest
-	20, // 22: crow.v1.VoiceService.StreamAudio:input_type -> crow.v1.AudioChunk
-	22, // 23: crow.v1.VoiceService.CancelVoiceSession:input_type -> crow.v1.CancelVoiceSessionRequest
+	14, // 18: crow.v1.TaskService.ListTasks:input_type -> crow.v1.ListTasksRequest
+	16, // 19: crow.v1.TaskService.WatchTask:input_type -> crow.v1.WatchTaskRequest
+	13, // 20: crow.v1.TaskService.CancelTask:input_type -> crow.v1.CancelTaskRequest
+	20, // 21: crow.v1.VoiceService.StartVoiceSession:input_type -> crow.v1.StartVoiceSessionRequest
+	22, // 22: crow.v1.VoiceService.StreamAudio:input_type -> crow.v1.AudioChunk
+	24, // 23: crow.v1.VoiceService.CancelVoiceSession:input_type -> crow.v1.CancelVoiceSessionRequest
 	7,  // 24: crow.v1.ComputerService.WatchCommands:input_type -> crow.v1.WatchComputerCommandsRequest
 	9,  // 25: crow.v1.ComputerService.SubmitResult:input_type -> crow.v1.ComputerResult
-	24, // 26: crow.v1.ApprovalService.ListPendingApprovals:input_type -> crow.v1.ListPendingApprovalsRequest
-	30, // 27: crow.v1.ApprovalService.DecideApproval:input_type -> crow.v1.DecideApprovalRequest
-	27, // 28: crow.v1.ApprovalService.ListGrants:input_type -> crow.v1.ListGrantsRequest
-	29, // 29: crow.v1.ApprovalService.RevokeGrants:input_type -> crow.v1.RevokeGrantsRequest
-	32, // 30: crow.v1.SettingsService.GetSettings:input_type -> crow.v1.GetSettingsRequest
-	33, // 31: crow.v1.SettingsService.SaveSettings:input_type -> crow.v1.SaveSettingsRequest
-	2,  // 32: crow.v1.CrowRuntimeService.GetSnapshot:output_type -> crow.v1.RuntimeSnapshot
-	3,  // 33: crow.v1.CrowRuntimeService.WatchRuntime:output_type -> crow.v1.RuntimeEvent
-	15, // 34: crow.v1.TaskService.CreateTask:output_type -> crow.v1.Task
-	16, // 35: crow.v1.TaskService.GetTask:output_type -> crow.v1.TaskDetail
-	13, // 36: crow.v1.TaskService.ListTasks:output_type -> crow.v1.ListTasksResponse
-	17, // 37: crow.v1.TaskService.WatchTask:output_type -> crow.v1.TaskEvent
-	15, // 38: crow.v1.TaskService.CancelTask:output_type -> crow.v1.Task
-	19, // 39: crow.v1.VoiceService.StartVoiceSession:output_type -> crow.v1.VoiceSession
-	21, // 40: crow.v1.VoiceService.StreamAudio:output_type -> crow.v1.VoiceEvent
-	23, // 41: crow.v1.VoiceService.CancelVoiceSession:output_type -> crow.v1.CancelVoiceSessionResponse
-	8,  // 42: crow.v1.ComputerService.WatchCommands:output_type -> crow.v1.ComputerCommand
-	10, // 43: crow.v1.ComputerService.SubmitResult:output_type -> crow.v1.SubmitComputerResultResponse
-	25, // 44: crow.v1.ApprovalService.ListPendingApprovals:output_type -> crow.v1.ListPendingApprovalsResponse
-	31, // 45: crow.v1.ApprovalService.DecideApproval:output_type -> crow.v1.Approval
-	28, // 46: crow.v1.ApprovalService.ListGrants:output_type -> crow.v1.ListGrantsResponse
-	28, // 47: crow.v1.ApprovalService.RevokeGrants:output_type -> crow.v1.ListGrantsResponse
-	34, // 48: crow.v1.SettingsService.GetSettings:output_type -> crow.v1.Settings
-	34, // 49: crow.v1.SettingsService.SaveSettings:output_type -> crow.v1.Settings
-	32, // [32:50] is the sub-list for method output_type
-	14, // [14:32] is the sub-list for method input_type
+	11, // 26: crow.v1.ComputerService.Perform:input_type -> crow.v1.PerformComputerActionRequest
+	26, // 27: crow.v1.ApprovalService.ListPendingApprovals:input_type -> crow.v1.ListPendingApprovalsRequest
+	32, // 28: crow.v1.ApprovalService.DecideApproval:input_type -> crow.v1.DecideApprovalRequest
+	29, // 29: crow.v1.ApprovalService.ListGrants:input_type -> crow.v1.ListGrantsRequest
+	31, // 30: crow.v1.ApprovalService.RevokeGrants:input_type -> crow.v1.RevokeGrantsRequest
+	34, // 31: crow.v1.SettingsService.GetSettings:input_type -> crow.v1.GetSettingsRequest
+	35, // 32: crow.v1.SettingsService.SaveSettings:input_type -> crow.v1.SaveSettingsRequest
+	2,  // 33: crow.v1.CrowRuntimeService.GetSnapshot:output_type -> crow.v1.RuntimeSnapshot
+	3,  // 34: crow.v1.CrowRuntimeService.WatchRuntime:output_type -> crow.v1.RuntimeEvent
+	17, // 35: crow.v1.TaskService.CreateTask:output_type -> crow.v1.Task
+	18, // 36: crow.v1.TaskService.GetTask:output_type -> crow.v1.TaskDetail
+	15, // 37: crow.v1.TaskService.ListTasks:output_type -> crow.v1.ListTasksResponse
+	19, // 38: crow.v1.TaskService.WatchTask:output_type -> crow.v1.TaskEvent
+	17, // 39: crow.v1.TaskService.CancelTask:output_type -> crow.v1.Task
+	21, // 40: crow.v1.VoiceService.StartVoiceSession:output_type -> crow.v1.VoiceSession
+	23, // 41: crow.v1.VoiceService.StreamAudio:output_type -> crow.v1.VoiceEvent
+	25, // 42: crow.v1.VoiceService.CancelVoiceSession:output_type -> crow.v1.CancelVoiceSessionResponse
+	8,  // 43: crow.v1.ComputerService.WatchCommands:output_type -> crow.v1.ComputerCommand
+	10, // 44: crow.v1.ComputerService.SubmitResult:output_type -> crow.v1.SubmitComputerResultResponse
+	12, // 45: crow.v1.ComputerService.Perform:output_type -> crow.v1.PerformComputerActionResponse
+	27, // 46: crow.v1.ApprovalService.ListPendingApprovals:output_type -> crow.v1.ListPendingApprovalsResponse
+	33, // 47: crow.v1.ApprovalService.DecideApproval:output_type -> crow.v1.Approval
+	30, // 48: crow.v1.ApprovalService.ListGrants:output_type -> crow.v1.ListGrantsResponse
+	30, // 49: crow.v1.ApprovalService.RevokeGrants:output_type -> crow.v1.ListGrantsResponse
+	36, // 50: crow.v1.SettingsService.GetSettings:output_type -> crow.v1.Settings
+	36, // 51: crow.v1.SettingsService.SaveSettings:output_type -> crow.v1.Settings
+	33, // [33:52] is the sub-list for method output_type
+	14, // [14:33] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
 	14, // [14:14] is the sub-list for extension extendee
 	0,  // [0:14] is the sub-list for field type_name
@@ -2510,7 +2655,7 @@ func file_crow_v1_crow_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_crow_v1_crow_proto_rawDesc), len(file_crow_v1_crow_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   6,
 		},

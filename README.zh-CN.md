@@ -41,6 +41,17 @@ cp .env.example .env   # 可选：设置 CROW_LLM_PROVIDER / CROW_LLM_MODEL / CR
 
 要求：macOS、Go 1.24+、Swift 工具链。
 
+## 通过 MCP 使用电脑操作
+
+其他 Agent 可以通过 Crow 查看和操作这台 Mac。先在 Crow 设置里打开电脑操作，再注册 MCP 服务：
+
+```bash
+go build -o ~/.local/bin/crowctl ./apps/daemon/cmd/crowctl
+claude mcp add crow-computer -- ~/.local/bin/crowctl mcp   # Claude Code；任何 stdio MCP 客户端都可以
+```
+
+这些调用同样遵守 Crow 的审批策略、只看模式和停止快捷键（⌃⌥⎋），每个会话会显示为一个"External agent"任务。
+
 ## 文档
 
 详见 [`docs/`](docs/) 与 [路线图](docs/roadmap.md)，入口推荐 [`product-blueprint.md`](docs/product-blueprint.md) 与 [`system-design.md`](docs/system-design.md)。

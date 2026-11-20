@@ -206,3 +206,31 @@ func TestTypeLengthLimit(t *testing.T) {
 		t.Fatalf("actions = %v", actions)
 	}
 }
+
+func TestPerform(t *testing.T) {
+	b := NewBridge()
+	actions, stop := fakeApp(t, b)
+	defer stop()
+	enabled := true
+	e := NewExecutor(b, nil, nil, 10).WithEnabled(func() bool { return enabled })
+	sink := &fakeSink{}
+
+	text, images, err := e.Perform(context.Background(), "ext", `{"action":"click","x":1,"y":2}`, sink)
+	if err != nil || len(images) != 1 || !strings.Contains(text, "Screenshot") {
+		t.Fatalf("text = %q images = %d err = %v", text, len(images), err)
+	}
+	if strings.Join(*actions, ",") != "click" || strings.Join(sink.asked, ",") != "computer:Clicking" {
+		t.Fatalf("actions = %v asked = %v", *actions, sink.asked)
+	}
+
+	e.busy <- struct{}{}
+	if _, _, err := e.Perform(context.Background(), "ext", `{"action":"screenshot"}`, sink); err == nil || !strings.Contains(err.Error(), "another task") {
+		t.Fatalf("busy err = %v", err)
+	}
+	<-e.busy
+
+	enabled = false
+	if _, _, err := e.Perform(context.Background(), "ext", `{"action":"screenshot"}`, sink); err == nil || !strings.Contains(err.Error(), "turned off") {
+		t.Fatalf("disabled err = %v", err)
+	}
+}

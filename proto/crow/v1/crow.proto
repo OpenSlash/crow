@@ -29,6 +29,8 @@ service VoiceService {
 service ComputerService {
   rpc WatchCommands(WatchComputerCommandsRequest) returns (stream ComputerCommand);
   rpc SubmitResult(ComputerResult) returns (SubmitComputerResultResponse);
+  // Runs one action for an external agent (crowctl mcp) under Crow's rules.
+  rpc Perform(PerformComputerActionRequest) returns (PerformComputerActionResponse);
 }
 
 service ApprovalService {
@@ -108,6 +110,22 @@ message ComputerResult {
 }
 
 message SubmitComputerResultResponse {}
+
+message PerformComputerActionRequest {
+  // Task that groups an external session's actions and approvals; empty starts a new one.
+  string task_id = 1;
+  // The computer tool's arguments, e.g. {"action":"click","element":3}.
+  string args_json = 2;
+  // Shown as the task title when a new task starts, e.g. the client's name.
+  string client = 3;
+}
+
+message PerformComputerActionResponse {
+  string task_id = 1;
+  string text = 2;
+  bytes image = 3;
+  string image_media_type = 4;
+}
 
 message CancelTaskRequest {
   string task_id = 1;

@@ -54,9 +54,10 @@ type server struct {
 	approvals    map[string]chan bool
 	taskWatchers map[string]map[chan *crowv1.TaskEvent]struct{}
 	// cancels holds the cancel func of each running task.
-	cancels map[string]context.CancelFunc
-	gate    *approval.Gate
-	bridge  *computer.Bridge
+	cancels  map[string]context.CancelFunc
+	gate     *approval.Gate
+	bridge   *computer.Bridge
+	computer *computer.Executor
 }
 
 func newServer(store *store.Store) *server {
@@ -65,11 +66,13 @@ func newServer(store *store.Store) *server {
 		log.Printf("executor adapter warning: %s", warning)
 	}
 	bridge := computer.NewBridge()
-	executors = append([]executor.Executor{computer.NewExecutor(bridge, llmProvider,
+	computerExecutor := computer.NewExecutor(bridge, llmProvider,
 		func() bool { return boolEnvDefault("CROW_COMPUTER_SEE_ONLY", false) },
-		intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps)).WithEnabled(computerUseEnabled)}, executors...)
+		intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps)).WithEnabled(computerUseEnabled)
+	executors = append([]executor.Executor{computerExecutor}, executors...)
 	return &server{
 		bridge:    bridge,
+		computer:  computerExecutor,
 		gate:      approval.NewGate(store, approvalPolicyFromEnv, approvalGrantTTL),
 		store:     store,
 		startedAt: time.Now(),
@@ -199,6 +202,37 @@ func (s *server) SubmitResult(ctx context.Context, req *connect.Request[crowv1.C
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
 	return connect.NewResponse(&crowv1.SubmitComputerResultResponse{}), nil
+}
+
+// Perform runs one computer action for an external agent. Its actions and
+// approvals are grouped under a task that records the session in Crow.
+func (s *server) Perform(ctx context.Context, req *connect.Request[crowv1.PerformComputerActionRequest]) (*connect.Response[crowv1.PerformComputerActionResponse], error) {
+	taskID := strings.TrimSpace(req.Msg.GetTaskId())
+	if _, _, _, err := s.store.GetTask(taskID); taskID == "" || err != nil {
+		now := time.Now().Format(time.RFC3339)
+		task := &crowv1.Task{
+			Id:        fmt.Sprintf("task-%d", time.Now().UnixNano()),
+			Title:     "External agent: " + firstNonEmpty(req.Msg.GetClient(), "computer use"),
+			Kind:      computer.Kind,
+			Status:    "completed",
+			Subtitle:  "Idle",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := s.store.CreateTask(task); err != nil {
+			return nil, err
+		}
+		taskID = task.Id
+	}
+	text, images, err := s.computer.Perform(ctx, taskID, req.Msg.GetArgsJson(), s)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	res := &crowv1.PerformComputerActionResponse{TaskId: taskID, Text: text}
+	if len(images) > 0 {
+		res.Image, res.ImageMediaType = images[0].Data, images[0].MediaType
+	}
+	return connect.NewResponse(res), nil
 }
 
 func intEnv(key string, fallback int) int {

@@ -110,7 +110,7 @@ func (e *Executor) Run(ctx context.Context, req executor.Request, sink executor.
 	event := func(ev executor.Event) { _ = sink.ApplyExecutorEvent(ctx, req.TaskID, ev) }
 	event(executor.Event{Type: "executor.started", Title: "Computer use started", Message: req.Command, Status: "running", Subtitle: "Looking at the screen"})
 
-	tool := toolSpec(seeOnly)
+	tool := ToolSpec(seeOnly)
 	messages := []llm.Message{{Role: "user", Content: req.Command}}
 	for step := 0; step < e.maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
@@ -143,37 +143,49 @@ func (e *Executor) Run(ctx context.Context, req executor.Request, sink executor.
 
 // runAction performs one tool call and returns the tool message for the model.
 func (e *Executor) runAction(ctx context.Context, call llm.ToolCall, seeOnly bool, approve func(string, string) (bool, error), event func(executor.Event)) llm.Message {
-	fail := func(format string, args ...any) llm.Message {
-		return llm.Message{Role: "tool", Content: "Error: " + fmt.Sprintf(format, args...)}
-	}
 	if call.Name != "computer" {
-		return fail("unknown tool %s", call.Name)
+		return llm.Message{Role: "tool", Content: "Error: unknown tool " + call.Name}
 	}
+	text, images, err := e.act(ctx, call.Arguments, seeOnly, approve, event)
+	switch {
+	case errors.Is(err, errDeclined):
+		return llm.Message{Role: "tool", Content: "The user declined this action. Do not retry it."}
+	case err != nil:
+		return llm.Message{Role: "tool", Content: "Error: " + err.Error()}
+	}
+	return llm.Message{Role: "tool", Content: text, Images: images}
+}
+
+var errDeclined = errors.New("the user declined this action")
+
+// act validates and performs one action given as the tool's JSON arguments, asking
+// for approval unless it only looks. It returns the text and images for the model.
+func (e *Executor) act(ctx context.Context, argsJSON string, seeOnly bool, approve func(string, string) (bool, error), event func(executor.Event)) (string, []llm.Image, error) {
 	var args map[string]any
-	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-		return fail("invalid arguments: %v", err)
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", nil, fmt.Errorf("invalid arguments: %v", err)
 	}
 	action, _ := args["action"].(string)
 	label, ok := actionLabels[action]
 	if !ok {
-		return fail("unknown action %q", action)
+		return "", nil, fmt.Errorf("unknown action %q", action)
 	}
 	delete(args, "action")
 	if text, _ := args["text"].(string); len([]rune(text)) > maxTypeLength {
-		return fail("text is longer than %d characters; type it in parts", maxTypeLength)
+		return "", nil, fmt.Errorf("text is longer than %d characters; type it in parts", maxTypeLength)
 	}
 	event(executor.Event{Type: "tool.started", Title: label, Message: describe(action, args), Status: "running", Subtitle: label})
 
 	if !readOnly[action] {
 		if seeOnly {
-			return fail("see-only mode is on: you may only take screenshots")
+			return "", nil, errors.New("see-only mode is on: you may only look at the screen")
 		}
 		ok, err := approve(label, describe(action, args))
 		if err != nil {
-			return fail("%v", err)
+			return "", nil, err
 		}
 		if !ok {
-			return llm.Message{Role: "tool", Content: "The user declined this action. Do not retry it."}
+			return "", nil, errDeclined
 		}
 	}
 	if action == "wait" {
@@ -181,31 +193,58 @@ func (e *Executor) runAction(ctx context.Context, call llm.ToolCall, seeOnly boo
 		select {
 		case <-time.After(time.Duration(min(max(seconds, 0.5), 10) * float64(time.Second))):
 		case <-ctx.Done():
-			return fail("cancelled")
+			return "", nil, ctx.Err()
 		}
 		action, args = "screenshot", map[string]any{}
 	}
 
 	res, err := e.bridge.Do(ctx, action, args)
 	if err != nil {
-		return fail("%v", err)
+		return "", nil, err
 	}
 	if !res.GetOk() {
-		return fail("%s", res.GetError())
+		return "", nil, errors.New(res.GetError())
 	}
-	msg := llm.Message{Role: "tool", Content: "OK"}
-	if text := strings.TrimSpace(res.GetText()); text != "" {
-		msg.Content = text
+	text := "OK"
+	if t := strings.TrimSpace(res.GetText()); t != "" {
+		text = t
 	}
-	if len(res.GetImage()) > 0 {
-		if action == "zoom" {
-			msg.Content += fmt.Sprintf(" Zoomed image %dx%d attached; coordinates still refer to the full screenshot.", res.GetWidth(), res.GetHeight())
-		} else {
-			msg.Content += fmt.Sprintf(" Screenshot %dx%d attached.", res.GetWidth(), res.GetHeight())
-		}
-		msg.Images = []llm.Image{{MediaType: firstNonEmpty(res.GetImageMediaType(), "image/jpeg"), Data: res.GetImage()}}
+	if len(res.GetImage()) == 0 {
+		return text, nil, nil
 	}
-	return msg
+	if action == "zoom" {
+		text += fmt.Sprintf(" Zoomed image %dx%d attached; coordinates still refer to the full screenshot.", res.GetWidth(), res.GetHeight())
+	} else {
+		text += fmt.Sprintf(" Screenshot %dx%d attached.", res.GetWidth(), res.GetHeight())
+	}
+	return text, []llm.Image{{MediaType: firstNonEmpty(res.GetImageMediaType(), "image/jpeg"), Data: res.GetImage()}}, nil
+}
+
+// Perform runs one action for an external agent (the MCP server) under the same
+// rules as a Crow task: the enabled switch, see-only mode, approvals under the
+// `computer` scope for taskID, and never while a Crow computer task is running.
+func (e *Executor) Perform(ctx context.Context, taskID, argsJSON string, sink executor.Sink) (string, []llm.Image, error) {
+	if e.enabled != nil && !e.enabled() {
+		return "", nil, errors.New("computer use is turned off; the user can enable it in Crow Settings")
+	}
+	select {
+	case e.busy <- struct{}{}:
+		defer func() { <-e.busy }()
+	default:
+		return "", nil, errors.New("Crow is using the computer for another task; try again later")
+	}
+	approvals, _ := sink.(executor.ApprovalSink)
+	if approvals == nil {
+		return "", nil, errors.New("computer use needs approvals")
+	}
+	approve := func(action, preview string) (bool, error) {
+		return approvals.RequestApproval(ctx, taskID, executor.ApprovalRequest{
+			Scope: "computer", Tool: "computer", Action: action, Preview: preview, Description: "External agent: " + preview, RiskLevel: 3,
+		})
+	}
+	event := func(ev executor.Event) { _ = sink.ApplyExecutorEvent(ctx, taskID, ev) }
+	defer event(executor.Event{Type: "executor.idle", Title: "External agent idle", Status: "completed", Subtitle: "Idle"})
+	return e.act(ctx, argsJSON, e.seeOnly != nil && e.seeOnly(), approve, event)
 }
 
 // pruneScreenshots drops all but the newest `keep` images to bound request size.
@@ -274,7 +313,8 @@ func describe(action string, args map[string]any) string {
 	}
 }
 
-func toolSpec(seeOnly bool) llm.Tool {
+// ToolSpec is the generic computer tool; seeOnly offers only the looking actions.
+func ToolSpec(seeOnly bool) llm.Tool {
 	actions := []string{"screenshot", "elements", "zoom", "windows", "click", "set_value", "move", "drag", "type", "key", "scroll", "open_app", "focus", "wait"}
 	if seeOnly {
 		actions = []string{"screenshot", "elements", "zoom", "windows", "wait"}

@@ -41,6 +41,17 @@ To use Crow Cloud instead, run `./scripts/run-crow-server.sh` and set the mode t
 
 Requirements: macOS, Go 1.24+, Swift toolchain.
 
+## Computer Use over MCP
+
+Other agents can see and operate this Mac through Crow. Turn on computer use in Crow Settings, then register the MCP server:
+
+```bash
+go build -o ~/.local/bin/crowctl ./apps/daemon/cmd/crowctl
+claude mcp add crow-computer -- ~/.local/bin/crowctl mcp   # Claude Code; any stdio MCP client works
+```
+
+Crow's approval policy, see-only mode and stop shortcut (⌃⌥⎋) apply to these calls, and each session appears as an "External agent" task.
+
 ## Docs
 
 See [`docs/`](docs/) and the [roadmap](docs/roadmap.md). Good starting points: [`product-blueprint.md`](docs/product-blueprint.md) and [`system-design.md`](docs/system-design.md).

@@ -74,6 +74,8 @@ const (
 	// ComputerServiceSubmitResultProcedure is the fully-qualified name of the ComputerService's
 	// SubmitResult RPC.
 	ComputerServiceSubmitResultProcedure = "/crow.v1.ComputerService/SubmitResult"
+	// ComputerServicePerformProcedure is the fully-qualified name of the ComputerService's Perform RPC.
+	ComputerServicePerformProcedure = "/crow.v1.ComputerService/Perform"
 	// ApprovalServiceListPendingApprovalsProcedure is the fully-qualified name of the ApprovalService's
 	// ListPendingApprovals RPC.
 	ApprovalServiceListPendingApprovalsProcedure = "/crow.v1.ApprovalService/ListPendingApprovals"
@@ -492,6 +494,8 @@ func (UnimplementedVoiceServiceHandler) CancelVoiceSession(context.Context, *con
 type ComputerServiceClient interface {
 	WatchCommands(context.Context, *connect.Request[v1.WatchComputerCommandsRequest]) (*connect.ServerStreamForClient[v1.ComputerCommand], error)
 	SubmitResult(context.Context, *connect.Request[v1.ComputerResult]) (*connect.Response[v1.SubmitComputerResultResponse], error)
+	// Runs one action for an external agent (crowctl mcp) under Crow's rules.
+	Perform(context.Context, *connect.Request[v1.PerformComputerActionRequest]) (*connect.Response[v1.PerformComputerActionResponse], error)
 }
 
 // NewComputerServiceClient constructs a client for the crow.v1.ComputerService service. By default,
@@ -517,6 +521,12 @@ func NewComputerServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(computerServiceMethods.ByName("SubmitResult")),
 			connect.WithClientOptions(opts...),
 		),
+		perform: connect.NewClient[v1.PerformComputerActionRequest, v1.PerformComputerActionResponse](
+			httpClient,
+			baseURL+ComputerServicePerformProcedure,
+			connect.WithSchema(computerServiceMethods.ByName("Perform")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -524,6 +534,7 @@ func NewComputerServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 type computerServiceClient struct {
 	watchCommands *connect.Client[v1.WatchComputerCommandsRequest, v1.ComputerCommand]
 	submitResult  *connect.Client[v1.ComputerResult, v1.SubmitComputerResultResponse]
+	perform       *connect.Client[v1.PerformComputerActionRequest, v1.PerformComputerActionResponse]
 }
 
 // WatchCommands calls crow.v1.ComputerService.WatchCommands.
@@ -536,10 +547,17 @@ func (c *computerServiceClient) SubmitResult(ctx context.Context, req *connect.R
 	return c.submitResult.CallUnary(ctx, req)
 }
 
+// Perform calls crow.v1.ComputerService.Perform.
+func (c *computerServiceClient) Perform(ctx context.Context, req *connect.Request[v1.PerformComputerActionRequest]) (*connect.Response[v1.PerformComputerActionResponse], error) {
+	return c.perform.CallUnary(ctx, req)
+}
+
 // ComputerServiceHandler is an implementation of the crow.v1.ComputerService service.
 type ComputerServiceHandler interface {
 	WatchCommands(context.Context, *connect.Request[v1.WatchComputerCommandsRequest], *connect.ServerStream[v1.ComputerCommand]) error
 	SubmitResult(context.Context, *connect.Request[v1.ComputerResult]) (*connect.Response[v1.SubmitComputerResultResponse], error)
+	// Runs one action for an external agent (crowctl mcp) under Crow's rules.
+	Perform(context.Context, *connect.Request[v1.PerformComputerActionRequest]) (*connect.Response[v1.PerformComputerActionResponse], error)
 }
 
 // NewComputerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -561,12 +579,20 @@ func NewComputerServiceHandler(svc ComputerServiceHandler, opts ...connect.Handl
 		connect.WithSchema(computerServiceMethods.ByName("SubmitResult")),
 		connect.WithHandlerOptions(opts...),
 	)
+	computerServicePerformHandler := connect.NewUnaryHandler(
+		ComputerServicePerformProcedure,
+		svc.Perform,
+		connect.WithSchema(computerServiceMethods.ByName("Perform")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/crow.v1.ComputerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ComputerServiceWatchCommandsProcedure:
 			computerServiceWatchCommandsHandler.ServeHTTP(w, r)
 		case ComputerServiceSubmitResultProcedure:
 			computerServiceSubmitResultHandler.ServeHTTP(w, r)
+		case ComputerServicePerformProcedure:
+			computerServicePerformHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -582,6 +608,10 @@ func (UnimplementedComputerServiceHandler) WatchCommands(context.Context, *conne
 
 func (UnimplementedComputerServiceHandler) SubmitResult(context.Context, *connect.Request[v1.ComputerResult]) (*connect.Response[v1.SubmitComputerResultResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ComputerService.SubmitResult is not implemented"))
+}
+
+func (UnimplementedComputerServiceHandler) Perform(context.Context, *connect.Request[v1.PerformComputerActionRequest]) (*connect.Response[v1.PerformComputerActionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ComputerService.Perform is not implemented"))
 }
 
 // ApprovalServiceClient is a client for the crow.v1.ApprovalService service.
