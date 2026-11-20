@@ -1,0 +1,14 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "description": "Delegates code and agent tasks to a user-installed Codex CLI.",
+  "version": "0.1.0",
+  "publisher": "Crow",
+  "homepage": "https://github.com/openai/codex",
+  "adapter": "acp",
+  "enabled": true,
+  "kinds": ["code", "agent"],
+  "command": "codex acp",
+  "supportsStreaming": true,
+  "supportsApproval": true
+}

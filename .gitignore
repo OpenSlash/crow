@@ -1,0 +1,10 @@
+.DS_Store
+.env
+
+# Build outputs
+.build/
+build/
+tmp/
+output/
+__pycache__/
+*.pyc

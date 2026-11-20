@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package crow.v1;
+
+option go_package = "github.com/crow/crow/apps/daemon/gen/crow/v1;crowv1";
+
+service CrowRuntimeService {
+  rpc GetSnapshot(GetSnapshotRequest) returns (RuntimeSnapshot);
+  rpc WatchRuntime(WatchRuntimeRequest) returns (stream RuntimeEvent);
+}
+
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (Task);
+  rpc GetTask(GetTaskRequest) returns (TaskDetail);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
+}
+
+service VoiceService {
+  rpc StartVoiceSession(StartVoiceSessionRequest) returns (VoiceSession);
+  rpc StreamAudio(stream AudioChunk) returns (stream VoiceEvent);
+  rpc CancelVoiceSession(CancelVoiceSessionRequest) returns (CancelVoiceSessionResponse);
+}
+
+service ApprovalService {
+  rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
+  rpc DecideApproval(DecideApprovalRequest) returns (Approval);
+}
+
+service SettingsService {
+  rpc GetSettings(GetSettingsRequest) returns (Settings);
+  rpc SaveSettings(SaveSettingsRequest) returns (Settings);
+}
+
+message GetSnapshotRequest {}
+
+message WatchRuntimeRequest {}
+
+message RuntimeSnapshot {
+  RuntimeState state = 1;
+  repeated Task recent_tasks = 2;
+  repeated Approval pending_approvals = 3;
+}
+
+message RuntimeEvent {
+  string id = 1;
+  string type = 2;
+  RuntimeState state = 3;
+  Task task = 4;
+  TaskEvent task_event = 5;
+  Approval approval = 6;
+  string created_at = 7;
+}
+
+message RuntimeState {
+  string status = 1;
+  string phase = 2;
+  string title = 3;
+  string message = 4;
+  string active_task_id = 5;
+  int32 pending_approvals = 6;
+  bool voice_listening = 7;
+  bool voice_speaking = 8;
+}
+
+message CreateTaskRequest {
+  string command = 1;
+  string mode = 2;
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message ListTasksRequest {
+  int32 limit = 1;
+  string status = 2;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message WatchTaskRequest {
+  string task_id = 1;
+}
+
+message Task {
+  string id = 1;
+  string title = 2;
+  string kind = 3;
+  string status = 4;
+  string subtitle = 5;
+  string created_at = 6;
+  string updated_at = 7;
+}
+
+message TaskDetail {
+  Task task = 1;
+  repeated TaskEvent events = 2;
+  Approval pending_approval = 3;
+}
+
+message TaskEvent {
+  string id = 1;
+  string task_id = 2;
+  string type = 3;
+  string title = 4;
+  string message = 5;
+  string created_at = 6;
+}
+
+message StartVoiceSessionRequest {
+  string source = 1;
+  string language = 2;
+}
+
+message VoiceSession {
+  string id = 1;
+  string status = 2;
+  string created_at = 3;
+}
+
+message AudioChunk {
+  string session_id = 1;
+  bytes pcm = 2;
+  int32 sample_rate = 3;
+  int32 channels = 4;
+  bool final = 5;
+}
+
+message VoiceEvent {
+  string id = 1;
+  string session_id = 2;
+  string type = 3;
+  string text = 4;
+  bool final = 5;
+  string created_at = 6;
+}
+
+message CancelVoiceSessionRequest {
+  string session_id = 1;
+}
+
+message CancelVoiceSessionResponse {
+  bool cancelled = 1;
+}
+
+message ListPendingApprovalsRequest {}
+
+message ListPendingApprovalsResponse {
+  repeated Approval approvals = 1;
+}
+
+message DecideApprovalRequest {
+  string approval_id = 1;
+  bool approved = 2;
+  string reason = 3;
+}
+
+message Approval {
+  string id = 1;
+  string task_id = 2;
+  string title = 3;
+  string description = 4;
+  int32 risk_level = 5;
+  string proposed_action = 6;
+  string preview = 7;
+  string status = 8;
+  string created_at = 9;
+  string decided_at = 10;
+}
+
+message GetSettingsRequest {}
+
+message SaveSettingsRequest {
+  Settings settings = 1;
+}
+
+message Settings {
+  reserved 1 to 6;
+  reserved "codex_path", "codex_cwd", "codex_model", "codex_reuse_context", "codex_approval_policy", "codex_sandbox";
+  string stt_language = 7;
+  string tts_provider = 8;
+  string tts_voice = 9;
+  bool tts_streaming = 10;
+  string island_screen = 11;
+  string island_hotkey = 12;
+  string island_idle_close_seconds = 13;
+}

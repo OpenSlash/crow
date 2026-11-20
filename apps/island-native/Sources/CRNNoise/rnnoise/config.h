@@ -1,0 +1,10 @@
+#ifndef CROW_RNNOISE_CONFIG_H
+#define CROW_RNNOISE_CONFIG_H
+
+#define HAVE_LRINTF 1
+#define HAVE_STDINT_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define FLOATING_POINT 1
+
+#endif
