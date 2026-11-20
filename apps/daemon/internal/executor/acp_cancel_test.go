@@ -99,3 +99,81 @@ func waitForPID(t *testing.T, path string) int {
 	t.Fatal("fake agent never started its child")
 	return 0
 }
+
+type recordingSink struct{ events []Event }
+
+func (s *recordingSink) ApplyExecutorEvent(_ context.Context, _ string, ev Event) error {
+	s.events = append(s.events, ev)
+	return nil
+}
+
+func TestACPStreamedReplyIsNotFragmented(t *testing.T) {
+	e := &ACPExecutor{id: "codex", name: "Codex"}
+	sink := &recordingSink{}
+	var transcript acpTranscript
+	for _, chunk := range []string{"下载", "目录", "：", "202", "6", "-", "11", "|", "a.jpg"} {
+		e.handleACPUpdate(context.Background(), "t1", sink, map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": chunk},
+		}, &transcript)
+	}
+	if transcript.text.String() != "下载目录：2026-11|a.jpg" {
+		t.Fatalf("transcript = %q", transcript.text.String())
+	}
+	for _, ev := range sink.events {
+		if ev.Type == "voice.output.segment" {
+			t.Fatalf("voice segment emitted: %+v", ev)
+		}
+	}
+	if len(sink.events) != 1 || sink.events[0].Type != "executor.output" {
+		t.Fatalf("events = %d %+v", len(sink.events), sink.events)
+	}
+}
+
+func TestACPAnswerFollowsLastToolCall(t *testing.T) {
+	e := &ACPExecutor{id: "codex", name: "Codex"}
+	sink := &recordingSink{}
+	var tr acpTranscript
+	send := func(update map[string]any) { e.handleACPUpdate(context.Background(), "t1", sink, update, &tr) }
+	chunk := func(text string) map[string]any {
+		return map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text}}
+	}
+	send(chunk("我先看看目录。"))
+	send(map[string]any{"sessionUpdate": "tool_call", "title": "List files", "kind": "read"})
+	send(chunk("目录可读取。"))
+	send(map[string]any{"sessionUpdate": "tool_call", "title": "Read metadata", "kind": "read"})
+	send(chunk("最近的文件是 a.jpg。"))
+	if got := tr.answer(); got != "最近的文件是 a.jpg。" {
+		t.Fatalf("answer = %q", got)
+	}
+	for i := 0; i < 50; i++ {
+		send(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "想"}})
+	}
+	thoughts := 0
+	for _, ev := range sink.events {
+		if ev.Type == "executor.thought" {
+			thoughts++
+		}
+	}
+	if thoughts != 1 {
+		t.Fatalf("thought events = %d", thoughts)
+	}
+	var none acpTranscript
+	none.text.WriteString("直接回答。")
+	if none.answer() != "直接回答。" {
+		t.Fatalf("no-tool answer = %q", none.answer())
+	}
+}
+
+func TestACPChunksKeepWhitespace(t *testing.T) {
+	e := &ACPExecutor{id: "codex", name: "Codex"}
+	var tr acpTranscript
+	for _, chunk := range []string{"1. a.txt", " - ", "2026-11-20", " 10:48", "\n", "2. b.jpg"} {
+		e.handleACPUpdate(context.Background(), "t1", &recordingSink{}, map[string]any{
+			"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": chunk},
+		}, &tr)
+	}
+	if got := tr.answer(); got != "1. a.txt - 2026-11-20 10:48\n2. b.jpg" {
+		t.Fatalf("answer = %q", got)
+	}
+}

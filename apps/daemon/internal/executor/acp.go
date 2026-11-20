@@ -210,7 +210,7 @@ func (e *ACPExecutor) Run(ctx context.Context, request Request, sink Sink) error
 		return err
 	}
 
-	var assistantBuffer strings.Builder
+	var assistantBuffer acpTranscript
 	handler := func(handlerCtx context.Context, envelope acpRPCEnvelope) {
 		e.handleACPEnvelope(handlerCtx, request.TaskID, sink, envelope, &assistantBuffer)
 	}
@@ -272,7 +272,7 @@ func (e *ACPExecutor) Run(ctx context.Context, request Request, sink Sink) error
 	if err != nil {
 		return fmt.Errorf("ACP session/prompt failed: %w", err)
 	}
-	message := strings.TrimSpace(assistantBuffer.String())
+	message := assistantBuffer.answer()
 	if message == "" {
 		message = firstNonEmpty(getString(promptResult, "stopReason"), "ACP turn completed.")
 	}
@@ -325,7 +325,7 @@ func (e *ACPExecutor) startACP(ctx context.Context, handler func(context.Context
 	return cmd, client, nil
 }
 
-func (e *ACPExecutor) handleACPEnvelope(ctx context.Context, taskID string, sink Sink, envelope acpRPCEnvelope, assistantBuffer *strings.Builder) {
+func (e *ACPExecutor) handleACPEnvelope(ctx context.Context, taskID string, sink Sink, envelope acpRPCEnvelope, assistantBuffer *acpTranscript) {
 	switch strings.TrimSpace(envelope.Method) {
 	case "session/update":
 		params := parseJSONMap(envelope.Params)
@@ -349,28 +349,62 @@ func (e *ACPExecutor) handleACPEnvelope(ctx context.Context, taskID string, sink
 	}
 }
 
-func (e *ACPExecutor) handleACPUpdate(ctx context.Context, taskID string, sink Sink, update map[string]any, assistantBuffer *strings.Builder) {
+// acpTranscript accumulates the agent's reply. Agents stream it in tiny chunks
+// (often a token at a time), so progress is published at most every
+// acpOutputInterval; the complete reply goes out once, with task.completed.
+type acpTranscript struct {
+	text      strings.Builder
+	published time.Time
+	// answerStart is where the text after the latest tool call begins: agents
+	// narrate before using tools, and the answer follows the last one.
+	answerStart int
+	thought     strings.Builder
+	thoughtAt   time.Time
+}
+
+// answer is the reply after the last tool call, or the whole reply without tools.
+func (t *acpTranscript) answer() string {
+	full := t.text.String()
+	if answer := strings.TrimSpace(full[min(t.answerStart, len(full)):]); answer != "" {
+		return answer
+	}
+	return strings.TrimSpace(full)
+}
+
+const acpOutputInterval = 800 * time.Millisecond
+
+func (e *ACPExecutor) handleACPUpdate(ctx context.Context, taskID string, sink Sink, update map[string]any, assistantBuffer *acpTranscript) {
 	switch getString(update, "sessionUpdate") {
 	case "agent_message_chunk":
 		text := acpContentText(update["content"])
 		if text == "" {
 			return
 		}
-		assistantBuffer.WriteString(text)
-		if acpTTSStreamingEnabled() {
-			_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "voice.output.segment", Title: "Crow speaking", Message: text, Status: "running", Subtitle: "Speaking"})
+		assistantBuffer.text.WriteString(text)
+		// No per-chunk voice segments: fragments like "202" or "|" were shown and
+		// spoken on the island. The conclusion is spoken when the task completes.
+		if time.Since(assistantBuffer.published) < acpOutputInterval {
+			return
 		}
-		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "executor.output", Title: firstNonEmpty(e.name, e.id) + " output", Message: assistantBuffer.String(), Status: "running", Subtitle: "Responding"})
+		assistantBuffer.published = time.Now()
+		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "executor.output", Title: firstNonEmpty(e.name, e.id) + " output", Message: assistantBuffer.text.String(), Status: "running", Subtitle: "Responding"})
 	case "agent_thought_chunk":
 		text := acpContentText(update["content"])
-		if text != "" {
-			_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "executor.thought", Title: "Agent thinking", Message: text, Status: "running", Subtitle: "Thinking"})
+		if text == "" {
+			return
 		}
+		assistantBuffer.thought.WriteString(text)
+		if time.Since(assistantBuffer.thoughtAt) < acpOutputInterval {
+			return
+		}
+		assistantBuffer.thoughtAt = time.Now()
+		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "executor.thought", Title: "Agent thinking", Message: lastRunes(assistantBuffer.thought.String(), 400), Status: "running", Subtitle: "Thinking"})
 	case "plan":
 		if text := acpPlanText(update); text != "" {
 			_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "executor.plan", Title: "Plan updated", Message: text, Status: "running", Subtitle: "Planning"})
 		}
 	case "tool_call":
+		assistantBuffer.answerStart = assistantBuffer.text.Len()
 		title := firstNonEmpty(getString(update, "title"), getString(update, "name"), "Tool call")
 		_ = sink.ApplyExecutorEvent(ctx, taskID, Event{Type: "tool.started", Title: title, Message: acpToolMessage(update), Status: "running", Subtitle: acpActivityLabel(getString(update, "kind"))})
 	case "tool_call_update":
@@ -662,14 +696,6 @@ func getString(values map[string]any, key string) string {
 	}
 }
 
-func acpTTSStreamingEnabled() bool {
-	if strings.TrimSpace(strings.ToLower(os.Getenv("CROW_TTS_PROVIDER"))) == "off" {
-		return false
-	}
-	value := strings.TrimSpace(strings.ToLower(os.Getenv("CROW_TTS_STREAMING")))
-	return value == "" || value == "1" || value == "true" || value == "yes" || value == "on"
-}
-
 func asMap(value any) map[string]any {
 	if result, ok := value.(map[string]any); ok {
 		return result
@@ -684,13 +710,15 @@ func asSlice(value any) []any {
 	return nil
 }
 
+// acpContentText returns a content block's text untrimmed: streamed chunks carry
+// the spaces and newlines between words and lines.
 func acpContentText(value any) string {
 	content := asMap(value)
-	if getString(content, "type") == "text" {
-		return getString(content, "text")
-	}
-	if text := getString(content, "text"); text != "" {
+	if text, ok := content["text"].(string); ok {
 		return text
+	}
+	if content != nil {
+		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
 }
@@ -805,4 +833,13 @@ func chooseACPOption(options []any, approved bool) string {
 		}
 	}
 	return ""
+}
+
+// lastRunes keeps the end of s, at most n runes.
+func lastRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return "…" + string(r[len(r)-n:])
 }

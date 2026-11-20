@@ -2724,8 +2724,26 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
         return prefix + cleanedBody
     }
 
-    private func compactSpeechText(_ value: String) -> String {
+    /// Markdown reads badly aloud: drop table rules, emphasis, code ticks and
+    /// headings, and turn table cell borders into pauses.
+    private func speakableText(_ value: String) -> String {
         var text = value
+        let rules: [(String, String)] = [
+            (#"(?m)^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$"#, ""), // |---|---|
+            (#"(?m)^\s{0,3}(#{1,6}|>|[-*+])\s+"#, ""),                          // headings, quotes, bullets
+            (#"\*\*|__|`+"#, ""),                                              // emphasis, code
+            (#"[ \t]*\|[ \t]*"#, "，"),                                       // table cells
+            (#"(，[ \t]*){2,}"#, "，"),
+            (#"(?m)^，|，$"#, ""),
+        ]
+        for (pattern, replacement) in rules {
+            text = text.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        return text
+    }
+
+    private func compactSpeechText(_ value: String) -> String {
+        var text = speakableText(value)
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\t", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
