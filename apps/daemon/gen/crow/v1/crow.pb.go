@@ -1522,8 +1522,16 @@ type Settings struct {
 	IslandScreen           string                 `protobuf:"bytes,11,opt,name=island_screen,json=islandScreen,proto3" json:"island_screen,omitempty"`
 	IslandHotkey           string                 `protobuf:"bytes,12,opt,name=island_hotkey,json=islandHotkey,proto3" json:"island_hotkey,omitempty"`
 	IslandIdleCloseSeconds string                 `protobuf:"bytes,13,opt,name=island_idle_close_seconds,json=islandIdleCloseSeconds,proto3" json:"island_idle_close_seconds,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// "local" (daemon calls the provider directly) or "cloud" (Crow Cloud).
+	AgentMode   string `protobuf:"bytes,14,opt,name=agent_mode,json=agentMode,proto3" json:"agent_mode,omitempty"`
+	LlmProvider string `protobuf:"bytes,15,opt,name=llm_provider,json=llmProvider,proto3" json:"llm_provider,omitempty"`
+	LlmBaseUrl  string `protobuf:"bytes,16,opt,name=llm_base_url,json=llmBaseUrl,proto3" json:"llm_base_url,omitempty"`
+	LlmModel    string `protobuf:"bytes,17,opt,name=llm_model,json=llmModel,proto3" json:"llm_model,omitempty"`
+	// Write-only. Never returned; see llm_api_key_set.
+	LlmApiKey     string `protobuf:"bytes,18,opt,name=llm_api_key,json=llmApiKey,proto3" json:"llm_api_key,omitempty"`
+	LlmApiKeySet  bool   `protobuf:"varint,19,opt,name=llm_api_key_set,json=llmApiKeySet,proto3" json:"llm_api_key_set,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Settings) Reset() {
@@ -1603,6 +1611,48 @@ func (x *Settings) GetIslandIdleCloseSeconds() string {
 		return x.IslandIdleCloseSeconds
 	}
 	return ""
+}
+
+func (x *Settings) GetAgentMode() string {
+	if x != nil {
+		return x.AgentMode
+	}
+	return ""
+}
+
+func (x *Settings) GetLlmProvider() string {
+	if x != nil {
+		return x.LlmProvider
+	}
+	return ""
+}
+
+func (x *Settings) GetLlmBaseUrl() string {
+	if x != nil {
+		return x.LlmBaseUrl
+	}
+	return ""
+}
+
+func (x *Settings) GetLlmModel() string {
+	if x != nil {
+		return x.LlmModel
+	}
+	return ""
+}
+
+func (x *Settings) GetLlmApiKey() string {
+	if x != nil {
+		return x.LlmApiKey
+	}
+	return ""
+}
+
+func (x *Settings) GetLlmApiKeySet() bool {
+	if x != nil {
+		return x.LlmApiKeySet
+	}
+	return false
 }
 
 var File_crow_v1_crow_proto protoreflect.FileDescriptor
@@ -1727,7 +1777,7 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	" \x01(\tR\tdecidedAt\"\x14\n" +
 	"\x12GetSettingsRequest\"D\n" +
 	"\x13SaveSettingsRequest\x12-\n" +
-	"\bsettings\x18\x01 \x01(\v2\x11.crow.v1.SettingsR\bsettings\"\xfc\x02\n" +
+	"\bsettings\x18\x01 \x01(\v2\x11.crow.v1.SettingsR\bsettings\"\xc4\x04\n" +
 	"\bSettings\x12!\n" +
 	"\fstt_language\x18\a \x01(\tR\vsttLanguage\x12!\n" +
 	"\ftts_provider\x18\b \x01(\tR\vttsProvider\x12\x1b\n" +
@@ -1736,7 +1786,15 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	" \x01(\bR\fttsStreaming\x12#\n" +
 	"\risland_screen\x18\v \x01(\tR\fislandScreen\x12#\n" +
 	"\risland_hotkey\x18\f \x01(\tR\fislandHotkey\x129\n" +
-	"\x19island_idle_close_seconds\x18\r \x01(\tR\x16islandIdleCloseSecondsJ\x04\b\x01\x10\aR\n" +
+	"\x19island_idle_close_seconds\x18\r \x01(\tR\x16islandIdleCloseSeconds\x12\x1d\n" +
+	"\n" +
+	"agent_mode\x18\x0e \x01(\tR\tagentMode\x12!\n" +
+	"\fllm_provider\x18\x0f \x01(\tR\vllmProvider\x12 \n" +
+	"\fllm_base_url\x18\x10 \x01(\tR\n" +
+	"llmBaseUrl\x12\x1b\n" +
+	"\tllm_model\x18\x11 \x01(\tR\bllmModel\x12\x1e\n" +
+	"\vllm_api_key\x18\x12 \x01(\tR\tllmApiKey\x12%\n" +
+	"\x0fllm_api_key_set\x18\x13 \x01(\bR\fllmApiKeySetJ\x04\b\x01\x10\aR\n" +
 	"codex_pathR\tcodex_cwdR\vcodex_modelR\x13codex_reuse_contextR\x15codex_approval_policyR\rcodex_sandbox2\xa1\x01\n" +
 	"\x12CrowRuntimeService\x12D\n" +
 	"\vGetSnapshot\x12\x1b.crow.v1.GetSnapshotRequest\x1a\x18.crow.v1.RuntimeSnapshot\x12E\n" +

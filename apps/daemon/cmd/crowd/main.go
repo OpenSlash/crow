@@ -22,11 +22,14 @@ import (
 	"connectrpc.com/connect"
 	crowv1 "github.com/crow/crow/apps/daemon/gen/crow/v1"
 	"github.com/crow/crow/apps/daemon/gen/crow/v1/crowv1connect"
+	"github.com/crow/crow/apps/daemon/internal/agent"
 	"github.com/crow/crow/apps/daemon/internal/config"
 	"github.com/crow/crow/apps/daemon/internal/executor"
+	"github.com/crow/crow/apps/daemon/internal/llm"
 	"github.com/crow/crow/apps/daemon/internal/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"google.golang.org/protobuf/proto"
 )
 
 type sessionFile struct {
@@ -144,6 +147,22 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 	path, handler = crowv1connect.NewVoiceServiceHandler(runtime, interceptors)
 	mux.Handle(path, handler)
 	mux.HandleFunc("/v1/executors", runtime.executorsHTTPHandler(token))
+
+	agentHandler := agent.NewHandler(func() (llm.Provider, error) {
+		return llm.New(llm.ConfigFromEnv())
+	})
+	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
+	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
+}
+
+func requireSessionToken(token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-crow-session-token") != token {
+			http.Error(w, "invalid session token", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *server) executorsHTTPHandler(token string) http.HandlerFunc {
@@ -632,15 +651,20 @@ func (s *server) DecideApproval(ctx context.Context, req *connect.Request[crowv1
 func (s *server) GetSettings(ctx context.Context, req *connect.Request[crowv1.GetSettingsRequest]) (*connect.Response[crowv1.Settings], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return connect.NewResponse(cloneSettings(s.settings)), nil
+	return connect.NewResponse(publicSettings(s.settings)), nil
 }
 
 func (s *server) SaveSettings(ctx context.Context, req *connect.Request[crowv1.SaveSettingsRequest]) (*connect.Response[crowv1.Settings], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.settings = cloneSettings(req.Msg.GetSettings())
+	next := cloneSettings(req.Msg.GetSettings())
+	// An empty key keeps the stored one for the same provider; the client never sees it.
+	if strings.TrimSpace(next.GetLlmApiKey()) == "" && next.GetLlmProvider() == s.settings.GetLlmProvider() {
+		next.LlmApiKey = s.settings.GetLlmApiKey()
+	}
+	s.settings = next
 	applySettingsToEnv(s.settings)
-	return connect.NewResponse(cloneSettings(s.settings)), nil
+	return connect.NewResponse(publicSettings(s.settings)), nil
 }
 
 func settingsFromEnv() *crowv1.Settings {
@@ -652,6 +676,11 @@ func settingsFromEnv() *crowv1.Settings {
 		IslandScreen:           firstNonEmptyEnv("CROW_ISLAND_SCREEN"),
 		IslandHotkey:           firstNonEmptyEnv("CROW_ISLAND_HOTKEY"),
 		IslandIdleCloseSeconds: firstNonEmptyEnv("CROW_ISLAND_IDLE_CLOSE_SECONDS"),
+		AgentMode:              firstNonEmptyEnv("CROW_AGENT_MODE"),
+		LlmProvider:            firstNonEmptyEnv("CROW_LLM_PROVIDER"),
+		LlmBaseUrl:             firstNonEmptyEnv("CROW_LLM_BASE_URL"),
+		LlmModel:               firstNonEmptyEnv("CROW_LLM_MODEL"),
+		LlmApiKey:              firstNonEmptyEnv("CROW_LLM_API_KEY"),
 	}
 	applyRuntimeSettingsFile(settings)
 	applySettingsToEnv(settings)
@@ -670,6 +699,11 @@ func applySettingsToEnv(settings *crowv1.Settings) {
 	setEnvIfPresent("CROW_ISLAND_SCREEN", settings.GetIslandScreen())
 	setEnvIfPresent("CROW_ISLAND_HOTKEY", settings.GetIslandHotkey())
 	setEnvIfPresent("CROW_ISLAND_IDLE_CLOSE_SECONDS", settings.GetIslandIdleCloseSeconds())
+	setEnvIfPresent("CROW_AGENT_MODE", settings.GetAgentMode())
+	setEnvIfPresent("CROW_LLM_PROVIDER", settings.GetLlmProvider())
+	setEnvIfPresent("CROW_LLM_BASE_URL", settings.GetLlmBaseUrl())
+	setEnvIfPresent("CROW_LLM_MODEL", settings.GetLlmModel())
+	setEnvIfPresent("CROW_LLM_API_KEY", settings.GetLlmApiKey())
 }
 
 func setEnvIfPresent(key string, value string) {
@@ -744,6 +778,19 @@ func applyRuntimeSettingValues(settings *crowv1.Settings, values map[string]stri
 	}
 	if value := strings.TrimSpace(values["CROW_ISLAND_IDLE_CLOSE_SECONDS"]); value != "" {
 		settings.IslandIdleCloseSeconds = value
+	}
+	// The API key is never stored in runtime-settings.json.
+	if value := strings.TrimSpace(values["CROW_AGENT_MODE"]); value != "" {
+		settings.AgentMode = value
+	}
+	if value := strings.TrimSpace(values["CROW_LLM_PROVIDER"]); value != "" {
+		settings.LlmProvider = value
+	}
+	if value := strings.TrimSpace(values["CROW_LLM_BASE_URL"]); value != "" {
+		settings.LlmBaseUrl = value
+	}
+	if value := strings.TrimSpace(values["CROW_LLM_MODEL"]); value != "" {
+		settings.LlmModel = value
 	}
 }
 
@@ -946,13 +993,13 @@ func cloneSettings(settings *crowv1.Settings) *crowv1.Settings {
 	if settings == nil {
 		return &crowv1.Settings{}
 	}
-	return &crowv1.Settings{
-		SttLanguage:            settings.SttLanguage,
-		TtsProvider:            settings.TtsProvider,
-		TtsVoice:               settings.TtsVoice,
-		TtsStreaming:           settings.TtsStreaming,
-		IslandScreen:           settings.IslandScreen,
-		IslandHotkey:           settings.IslandHotkey,
-		IslandIdleCloseSeconds: settings.IslandIdleCloseSeconds,
-	}
+	return proto.Clone(settings).(*crowv1.Settings)
+}
+
+// publicSettings hides the API key and reports only whether one is set.
+func publicSettings(settings *crowv1.Settings) *crowv1.Settings {
+	out := cloneSettings(settings)
+	out.LlmApiKeySet = strings.TrimSpace(out.GetLlmApiKey()) != ""
+	out.LlmApiKey = ""
+	return out
 }

@@ -171,8 +171,18 @@ struct RuntimeSettings: Codable {
     var islandHotkey: String = ""
     var islandIdleCloseSeconds: String = ""
     var islandAvatarStyle: String = ""
+    var agentMode: String = ""
+    var llmProvider: String = ""
+    var llmBaseUrl: String = ""
+    var llmModel: String = ""
+    var llmApiKeySet: Bool = false
 
     enum CodingKeys: String, CodingKey {
+        case agentMode
+        case llmProvider
+        case llmBaseUrl
+        case llmModel
+        case llmApiKeySet
         case sttLanguage
         case ttsProvider
         case ttsVoice
@@ -195,11 +205,22 @@ struct RuntimeSettings: Codable {
         islandHotkey = try container.decodeIfPresent(String.self, forKey: .islandHotkey) ?? ""
         islandIdleCloseSeconds = try container.decodeIfPresent(String.self, forKey: .islandIdleCloseSeconds) ?? ""
         islandAvatarStyle = try container.decodeIfPresent(String.self, forKey: .islandAvatarStyle) ?? ""
+        agentMode = try container.decodeIfPresent(String.self, forKey: .agentMode) ?? ""
+        llmProvider = try container.decodeIfPresent(String.self, forKey: .llmProvider) ?? ""
+        llmBaseUrl = try container.decodeIfPresent(String.self, forKey: .llmBaseUrl) ?? ""
+        llmModel = try container.decodeIfPresent(String.self, forKey: .llmModel) ?? ""
+        llmApiKeySet = try container.decodeIfPresent(Bool.self, forKey: .llmApiKeySet) ?? false
     }
 
-    func requestBody() -> [String: Any] {
+    /// `apiKey` is write-only: pass it only when the user entered or switched to a key.
+    func requestBody(apiKey: String? = nil) -> [String: Any] {
         [
             "settings": [
+                "agentMode": agentMode,
+                "llmProvider": llmProvider,
+                "llmBaseUrl": llmBaseUrl,
+                "llmModel": llmModel,
+                "llmApiKey": apiKey ?? "",
                 "sttLanguage": sttLanguage,
                 "ttsProvider": ttsProvider,
                 "ttsVoice": ttsVoice,
@@ -221,7 +242,11 @@ struct RuntimeSettings: Codable {
             "CROW_ISLAND_SCREEN": islandScreen,
             "CROW_ISLAND_HOTKEY": islandHotkey,
             "CROW_ISLAND_IDLE_CLOSE_SECONDS": islandIdleCloseSeconds,
-            "CROW_ISLAND_AVATAR_STYLE": islandAvatarStyle
+            "CROW_ISLAND_AVATAR_STYLE": islandAvatarStyle,
+            "CROW_AGENT_MODE": agentMode,
+            "CROW_LLM_PROVIDER": llmProvider,
+            "CROW_LLM_BASE_URL": llmBaseUrl,
+            "CROW_LLM_MODEL": llmModel
         ].filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }
@@ -320,6 +345,9 @@ final class CrowDaemonSupervisor {
             "/usr/bin",
             "/bin"
         ].compactMap { $0 }.joined(separator: ":")
+        if environment["CROW_LLM_API_KEY"]?.isEmpty ?? true, let key = CrowModelKeychain.configuredAPIKey() {
+            environment["CROW_LLM_API_KEY"] = key
+        }
         process.environment = environment
 
         let log = daemonLogHandle()
@@ -516,8 +544,8 @@ final class CrowRPCClient {
         try await unary("/crow.v1.SettingsService/GetSettings", body: [:])
     }
 
-    func saveSettings(_ settings: RuntimeSettings) async throws -> RuntimeSettings {
-        try await unary("/crow.v1.SettingsService/SaveSettings", body: settings.requestBody())
+    func saveSettings(_ settings: RuntimeSettings, apiKey: String? = nil) async throws -> RuntimeSettings {
+        try await unary("/crow.v1.SettingsService/SaveSettings", body: settings.requestBody(apiKey: apiKey))
     }
 
     func getExecutors(deep: Bool = false) async throws -> ExecutorsSnapshot {
@@ -725,14 +753,22 @@ final class CrowAppModel: ObservableObject {
         }
     }
 
-    func saveSettings(_ nextSettings: RuntimeSettings) {
+    /// `newAPIKey` is a key the user just typed; it is stored in the Keychain for the
+    /// selected provider. Otherwise the provider's saved key (if any) is sent.
+    func saveSettings(_ nextSettings: RuntimeSettings, newAPIKey: String = "") {
         guard !isBusy else { return }
         isBusy = true
         settingsStatus = "Saving settings..."
+        let provider = CrowModelProvider.from(nextSettings.llmProvider)
+        let typedKey = newAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typedKey.isEmpty {
+            CrowModelKeychain.setAPIKey(typedKey, for: provider)
+        }
+        let apiKey = typedKey.isEmpty ? CrowModelKeychain.apiKey(for: provider) : typedKey
         Swift.Task {
             do {
                 guard let client else { throw NSError(domain: "CrowAppModel", code: 1, userInfo: [NSLocalizedDescriptionKey: "Daemon is not connected"]) }
-                settings = try await client.saveSettings(nextSettings)
+                settings = try await client.saveSettings(nextSettings, apiKey: apiKey)
                 settings.islandAvatarStyle = nextSettings.islandAvatarStyle
                 try persistRuntimeSettings(settings)
                 CrowHotKeyCenter.shared.reload()
@@ -1219,6 +1255,12 @@ final class CrowWindowController: NSWindowController {
     private let islandIdleCloseField = NSTextField(string: "")
     private let streamTTSButton = NSButton(checkboxWithTitle: "Stream TTS output", target: nil, action: nil)
     private let settingsStatusLabel = NSTextField(labelWithString: "")
+    private let agentModePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let llmProviderPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let llmBaseURLField = NSTextField(string: "")
+    private let llmModelField = NSTextField(string: "")
+    private let llmAPIKeyField = NSSecureTextField(string: "")
+    private let testModelButton = NSButton(title: "Test", target: nil, action: nil)
     private let executorSummaryLabel = NSTextField(labelWithString: "")
     private let executorDetailLabel = NSTextField(labelWithString: "")
     private let executorListStack = NSStackView()
@@ -1494,6 +1536,21 @@ final class CrowWindowController: NSWindowController {
         mainCard.spacing = 0
         mainCard.alignment = .width
 
+        configureModelControls()
+        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "cpu", title: "Model", subtitle: "Local uses your own API key"))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsPopUpRow(symbol: "server.rack", title: "Mode", popUp: agentModePopUp))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsPopUpRow(symbol: "building.2", title: "Provider", popUp: llmProviderPopUp))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsFieldRow(symbol: "link", title: "Base URL", field: llmBaseURLField))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsFieldRow(symbol: "sparkles", title: "Model", field: llmModelField))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsFieldRow(symbol: "key", title: "API key", field: llmAPIKeyField))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsActionsRow(symbol: "checkmark.seal", title: "Connection", buttons: [testModelButton]))
+        mainCard.addArrangedSubview(makeSeparator())
         mainCard.addArrangedSubview(settingsSectionHeader(symbol: "waveform", title: "Voice", subtitle: "Audio output"))
         mainCard.addArrangedSubview(makeSeparator())
         configureTTSVoicePopUp()
@@ -1776,6 +1833,60 @@ final class CrowWindowController: NSWindowController {
         row.addArrangedSubview(text)
         row.addArrangedSubview(NSView())
         return row
+    }
+
+    private func configureModelControls() {
+        guard agentModePopUp.numberOfItems == 0 else { return }
+        for (value, title) in [(CrowAgentMode.local.rawValue, "Local"), (CrowAgentMode.cloud.rawValue, "Crow Cloud")] {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.representedObject = value
+            agentModePopUp.menu?.addItem(item)
+        }
+        for provider in CrowModelProvider.allCases {
+            let item = NSMenuItem(title: provider.title, action: nil, keyEquivalent: "")
+            item.representedObject = provider.rawValue
+            llmProviderPopUp.menu?.addItem(item)
+        }
+        agentModePopUp.target = self
+        agentModePopUp.action = #selector(modelControlsChanged)
+        llmProviderPopUp.target = self
+        llmProviderPopUp.action = #selector(modelControlsChanged)
+        testModelButton.bezelStyle = .rounded
+        testModelButton.target = self
+        testModelButton.action = #selector(testModelConnection)
+    }
+
+    /// Placeholders show provider defaults; local-only fields are disabled in cloud mode.
+    private func updateModelControlState() {
+        let provider = CrowModelProvider.from(selectedPopUpValue(llmProviderPopUp, fallback: CrowModelProvider.openai.rawValue))
+        let isLocal = selectedPopUpValue(agentModePopUp, fallback: CrowAgentMode.local.rawValue) == CrowAgentMode.local.rawValue
+        llmBaseURLField.placeholderString = provider == .custom ? "https://…/v1" : "Default"
+        llmModelField.placeholderString = provider.defaultModel.isEmpty ? "Required" : provider.defaultModel
+        let hasKey = CrowModelKeychain.apiKey(for: provider) != nil
+        llmAPIKeyField.placeholderString = provider == .ollama ? "Not required" : (hasKey ? "Saved in Keychain" : "Required")
+        for control in [llmProviderPopUp, llmBaseURLField, llmModelField, llmAPIKeyField] as [NSControl] {
+            control.isEnabled = isLocal
+        }
+    }
+
+    @objc private func modelControlsChanged() {
+        llmAPIKeyField.stringValue = ""
+        updateModelControlState()
+    }
+
+    @objc private func testModelConnection() {
+        model.settingsStatus = "Testing model..."
+        CrowAgent.respond(input: "Reply with exactly: OK") { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let response):
+                    let label = [response.provider, response.model].filter { !$0.isEmpty }.joined(separator: " · ")
+                    self?.model.settingsStatus = "Connected: \(label)"
+                case .failure(let error):
+                    self?.model.settingsStatus = "Test failed: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     private func settingsFieldRow(symbol: String, title: String, field: NSTextField) -> NSView {
@@ -2093,8 +2204,13 @@ final class CrowWindowController: NSWindowController {
         settings.islandHotkey = islandHotkeyRecorder.hotKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandIdleCloseSeconds = islandIdleCloseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandAvatarStyle = selectedIslandAvatarStyle()
+        settings.agentMode = selectedPopUpValue(agentModePopUp, fallback: CrowAgentMode.local.rawValue)
+        settings.llmProvider = selectedPopUpValue(llmProviderPopUp, fallback: CrowModelProvider.openai.rawValue)
+        settings.llmBaseUrl = llmBaseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.llmModel = llmModelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingIslandAvatarStyle = settings.islandAvatarStyle
-        model.saveSettings(settings)
+        model.saveSettings(settings, newAPIKey: llmAPIKeyField.stringValue)
+        llmAPIKeyField.stringValue = ""
     }
 
     @objc private func islandAvatarStyleChanged() {
@@ -2320,6 +2436,15 @@ final class CrowWindowController: NSWindowController {
         }
         selectTTSVoice(settings.ttsVoice)
         selectIslandAvatarStyle(pendingIslandAvatarStyle ?? settings.islandAvatarStyle)
+        selectPopUp(agentModePopUp, value: settings.agentMode, fallback: CrowAgentMode.local.rawValue)
+        selectPopUp(llmProviderPopUp, value: settings.llmProvider, fallback: CrowModelProvider.openai.rawValue)
+        if !llmBaseURLField.currentEditorExists {
+            llmBaseURLField.stringValue = settings.llmBaseUrl
+        }
+        if !llmModelField.currentEditorExists {
+            llmModelField.stringValue = settings.llmModel
+        }
+        updateModelControlState()
         if !islandScreenField.currentEditorExists {
             islandScreenField.stringValue = settings.islandScreen
         }

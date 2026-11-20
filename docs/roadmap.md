@@ -13,20 +13,21 @@ Crow supports two ways to reach model services. Users pick one in Settings.
 
 `crow-cloud` stays as is. All new work below targets the daemon so that the local mode is complete on its own.
 
-## Phase 0 — Local model provider (foundation)
+## Phase 0 — Local model provider (foundation) ✅
 
-- [ ] `apps/daemon/internal/llm`: provider interface (streaming chat + tool calls)
-  - [ ] OpenAI-compatible client (OpenAI, DeepSeek, Kimi, Qwen, GLM, OpenRouter, Ollama, …)
-  - [ ] Anthropic client
-- [ ] Config: `CROW_AGENT_MODE=local|cloud`, `CROW_LLM_PROVIDER`, `CROW_LLM_BASE_URL`, `CROW_LLM_MODEL`, `CROW_LLM_API_KEY`; key saved to Keychain via SettingsService
-- [ ] Proto: `AgentService.Respond` (server stream of deltas / tool events / done)
-- [ ] Port system prompt and executor hand-off from `server/internal/server/openai_agent.go` into the daemon
-- [ ] Client: extract `CrowCloudAgent` from `LegacyIsland.swift` into an `AgentClient` that routes to daemon or cloud by mode
-- [ ] Settings UI: mode, provider, base URL, model, key, "Test connection"
-- [ ] Update `.env.example` and README
+- [x] `apps/daemon/internal/llm`: provider interface (streaming chat)
+  - [x] OpenAI-compatible client (OpenAI, DeepSeek, Moonshot, Qwen, GLM, OpenRouter, Ollama, custom)
+  - [x] Anthropic client
+- [x] Config: `CROW_AGENT_MODE=local|cloud`, `CROW_LLM_PROVIDER`, `CROW_LLM_BASE_URL`, `CROW_LLM_MODEL`, `CROW_LLM_API_KEY` (falls back to `CROW_OPENAI_*`)
+- [x] Daemon serves `/v1/agent/respond` and `/v1/agent/respond-stream` with the same wire format as crow-cloud (instead of a new proto service), guarded by the session token
+- [x] Port system prompt and executor hand-off from crow-cloud into `apps/daemon/internal/agent`
+- [x] Client: `AgentClient.swift` routes to daemon or cloud by mode; removed the duplicate Swift-side OpenAI fallback
+- [x] Settings: mode, provider, base URL, model, key (Keychain, per provider, write-only to the daemon), "Test" button
+- [x] Update `.env.example` and README
 
 ## Phase 1 — Agent loop and status events
 
+- [ ] Tool calling in `internal/llm` (OpenAI + Anthropic)
 - [ ] Tool-calling loop in the daemon with a per-wake request cap (default 40)
 - [ ] Tool `delegate_to_codex` replaces the keyword heuristic (`shouldFastDelegateToCodex`)
 - [ ] Emit typed activity events: `thinking`, `reading`, `searching`, `writing`, `running`, `using_computer`

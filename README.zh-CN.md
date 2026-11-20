@@ -21,19 +21,29 @@ Crow 是一个运行在 macOS 上的个人 AI 执行中枢：通过语音和文�
 | `docs` | 产品与技术设计文档 |
 | `scripts` | 开发运行脚本 |
 
+## 服务模式
+
+| 模式 | 说明 |
+| --- | --- |
+| **本地**（默认） | `crowd` daemon 使用你自己的 API Key 直接调用模型。支持 OpenAI、Anthropic、DeepSeek、Moonshot、Qwen、GLM、OpenRouter、Ollama 及任意 OpenAI 兼容接口。 |
+| **Crow Cloud** | 请求发往 `crow-cloud` 服务，可在本地运行或部署到云端。 |
+
 ## 快速开始
 
 ```bash
-cp .env.example .env   # 填入所需配置，如 CROW_OPENAI_API_KEY
-./scripts/run-crow-server.sh
+cp .env.example .env   # 可选：设置 CROW_LLM_PROVIDER / CROW_LLM_MODEL / CROW_LLM_API_KEY
 ./scripts/run-crow-mac.sh
 ```
+
+也可以在 App 的 **Settings → Model** 中配置模型，API Key 保存在钥匙串中。
+
+使用 Crow Cloud：运行 `./scripts/run-crow-server.sh`，并将模式切换为 **Crow Cloud**。
 
 要求：macOS、Go 1.24+、Swift 工具链。
 
 ## 文档
 
-详见 [`docs/`](docs/)，入口推荐 [`product-blueprint.md`](docs/product-blueprint.md) 与 [`system-design.md`](docs/system-design.md)。
+详见 [`docs/`](docs/) 与 [路线图](docs/roadmap.md)，入口推荐 [`product-blueprint.md`](docs/product-blueprint.md) 与 [`system-design.md`](docs/system-design.md)。
 
 ## License
 

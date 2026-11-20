@@ -21,19 +21,29 @@ Crow is a personal AI execution hub for macOS. It understands intent through voi
 | `docs` | Product and technical design docs |
 | `scripts` | Development scripts |
 
+## Service Modes
+
+| Mode | How it works |
+| --- | --- |
+| **Local** (default) | The `crowd` daemon calls the model provider directly with your own API key. Supports OpenAI, Anthropic, DeepSeek, Moonshot, Qwen, GLM, OpenRouter, Ollama and any OpenAI-compatible endpoint. |
+| **Crow Cloud** | Requests go to a `crow-cloud` server, which you can run locally or deploy to the cloud. |
+
 ## Quick Start
 
 ```bash
-cp .env.example .env   # fill in required config, e.g. CROW_OPENAI_API_KEY
-./scripts/run-crow-server.sh
+cp .env.example .env   # optional: set CROW_LLM_PROVIDER / CROW_LLM_MODEL / CROW_LLM_API_KEY
 ./scripts/run-crow-mac.sh
 ```
+
+Or configure the model in the app under **Settings → Model**; the API key is stored in Keychain.
+
+To use Crow Cloud instead, run `./scripts/run-crow-server.sh` and set the mode to **Crow Cloud**.
 
 Requirements: macOS, Go 1.24+, Swift toolchain.
 
 ## Docs
 
-See [`docs/`](docs/). Good starting points: [`product-blueprint.md`](docs/product-blueprint.md) and [`system-design.md`](docs/system-design.md).
+See [`docs/`](docs/) and the [roadmap](docs/roadmap.md). Good starting points: [`product-blueprint.md`](docs/product-blueprint.md) and [`system-design.md`](docs/system-design.md).
 
 ## License
 

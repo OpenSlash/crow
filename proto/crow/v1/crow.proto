@@ -187,4 +187,12 @@ message Settings {
   string island_screen = 11;
   string island_hotkey = 12;
   string island_idle_close_seconds = 13;
+  // "local" (daemon calls the provider directly) or "cloud" (Crow Cloud).
+  string agent_mode = 14;
+  string llm_provider = 15;
+  string llm_base_url = 16;
+  string llm_model = 17;
+  // Write-only. Never returned; see llm_api_key_set.
+  string llm_api_key = 18;
+  bool llm_api_key_set = 19;
 }
