@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -286,5 +287,72 @@ func TestOpenAILearnsModelQuirks(t *testing.T) {
 	}
 	if bodies[0]["max_completion_tokens"] == nil || bodies[0]["reasoning_effort"] != "none" {
 		t.Fatalf("body = %v", bodies[0])
+	}
+}
+
+func TestOpenAISwitchesToResponses(t *testing.T) {
+	var paths []string
+	var responsesBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusBadRequest)
+			if body["reasoning_effort"] == nil {
+				_, _ = w.Write([]byte(`{"error":{"message":"Function tools with reasoning_effort are not supported for m in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."}}`))
+			} else {
+				_, _ = w.Write([]byte(`{"error":{"message":"Unsupported value: 'reasoning_effort' does not support 'none' with this model."}}`))
+			}
+			return
+		}
+		responsesBody = body
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range []string{
+			`{"type":"response.output_text.delta","delta":"好"}`,
+			`{"type":"response.completed","response":{"output":[{"type":"message"},{"type":"function_call","call_id":"call_1","name":"reminder_list","arguments":""}]}}`,
+		} {
+			_, _ = w.Write([]byte("data: " + e + "\n\n"))
+		}
+	}))
+	defer server.Close()
+	p, _ := New(Config{Provider: "custom", BaseURL: server.URL + "/v1", Model: "reasoner-1", APIKey: "k"})
+	req := Request{
+		System: "sys",
+		Messages: []Message{
+			{Role: "user", Content: "q"},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_0", Name: "computer", Arguments: `{"action":"screenshot"}`}}},
+			{Role: "tool", ToolCallID: "call_0", Content: "ok", Images: []Image{{MediaType: "image/jpeg", Data: []byte("jpg")}}},
+		},
+		MaxTokens: 100,
+		Tools:     []Tool{{Name: "reminder_list", Parameters: map[string]any{"type": "object"}}},
+	}
+	var streamed string
+	resp, err := p.Stream(context.Background(), req, func(s string) error { streamed += s; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(paths, ",") != "/v1/chat/completions,/v1/chat/completions,/v1/responses" {
+		t.Fatalf("paths = %v", paths)
+	}
+	if streamed != "好" || len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "call_1" || resp.ToolCalls[0].Arguments != "{}" {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if responsesBody["instructions"] != "sys" || responsesBody["store"] != false || responsesBody["max_output_tokens"].(float64) != 100+reasoningHeadroom {
+		t.Fatalf("body = %v", responsesBody)
+	}
+	input := responsesBody["input"].([]any)
+	types := []string{}
+	for _, it := range input {
+		m := it.(map[string]any)
+		types = append(types, fmt.Sprint(m["type"], "/", m["role"]))
+	}
+	if strings.Join(types, ",") != "<nil>/user,function_call/<nil>,function_call_output/<nil>,<nil>/user" {
+		t.Fatalf("input = %v", types)
+	}
+	// Learned: the next request goes straight to /responses.
+	paths = nil
+	if _, err := p.Stream(context.Background(), req, func(string) error { return nil }); err != nil || strings.Join(paths, ",") != "/v1/responses" {
+		t.Fatalf("second paths = %v err = %v", paths, err)
 	}
 }

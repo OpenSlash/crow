@@ -20,6 +20,7 @@ type openAIQuirks struct {
 	completionTokens bool // send max_completion_tokens instead of max_tokens
 	noReasoning      bool // send reasoning_effort "none" so tools are allowed
 	noTemperature    bool // omit temperature
+	useResponses     bool // reasoning can't be turned off: tools need the Responses API
 }
 
 var learnedQuirks sync.Map // baseURL|model -> openAIQuirks
@@ -34,6 +35,9 @@ func (q *openAIQuirks) learn(err error) bool {
 		q.noReasoning = true
 	case !q.noTemperature && strings.Contains(msg, "'temperature'"):
 		q.noTemperature = true
+	case !q.useResponses && q.noReasoning && strings.Contains(msg, "reasoning_effort") && strings.Contains(msg, "'none'"):
+		// "set reasoning_effort to 'none'" was not enough: the model keeps reasoning.
+		q.useResponses = true
 	default:
 		return false
 	}
@@ -46,13 +50,22 @@ func (p *openAIProvider) Stream(ctx context.Context, req Request, onDelta func(s
 	if v, ok := learnedQuirks.Load(key); ok {
 		quirks = v.(openAIQuirks)
 	}
+	// CROW_LLM_API forces an API: "responses" or "chat". Otherwise it is learned.
+	api := strings.ToLower(env("CROW_LLM_API"))
 	for attempt := 0; ; attempt++ {
 		streamed := false
-		resp, err := p.streamOnce(ctx, req, quirks, func(text string) error {
+		track := func(text string) error {
 			streamed = true
 			return onDelta(text)
-		})
-		if err == nil || streamed || attempt >= 3 || !quirks.learn(err) {
+		}
+		var resp Response
+		var err error
+		if api == "responses" || (api != "chat" && quirks.useResponses) {
+			resp, err = p.streamResponses(ctx, req, quirks, track)
+		} else {
+			resp, err = p.streamOnce(ctx, req, quirks, track)
+		}
+		if err == nil || streamed || attempt >= 4 || !quirks.learn(err) {
 			return resp, err
 		}
 		learnedQuirks.Store(key, quirks)
