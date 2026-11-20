@@ -3877,9 +3877,12 @@ final class CrowIslandView: NSView {
     }
 
     private func respondToVoiceWithCrowAgent(text: String) {
+        // Set once the turn has started; a retry after that could repeat tool side effects.
+        let started = VoiceTurnFlag()
         CrowAgent.respondStream(input: text, onDelta: { [weak self] delta in
             DispatchQueue.main.async {
                 guard let self else { return }
+                started.value = true
                 self.cancelAutoClose()
                 self.isAwake = true
                 self.isExpanded = true
@@ -3891,6 +3894,7 @@ final class CrowIslandView: NSView {
             }
         }, onActivity: { [weak self] activity in
             DispatchQueue.main.async {
+                started.value = true
                 guard let self, self.voiceAgentText.isEmpty else { return }
                 self.voiceHint = activity.label
                 self.needsDisplay = true
@@ -3925,6 +3929,8 @@ final class CrowIslandView: NSView {
                             self.scheduleContinueListeningIfNeeded(after: self.lastVoiceUserText)
                         }
                     }
+                case .failure(let error) where started.value:
+                    self.showVoiceAgentFailure(error)
                 case .failure(let error):
                     CrowMacLog("agent voice stream failed falling back to non-stream \(error.localizedDescription)")
                     self.respondToVoiceWithCrowAgentFallback(text: text)
@@ -3967,16 +3973,21 @@ final class CrowIslandView: NSView {
                         }
                     }
                 case .failure(let error):
-                    let message = "Crow 暂时无法连接模型：\(Self.compactHint(error.localizedDescription))"
-                    CrowMacLog("agent voice failed \(error.localizedDescription)")
-                    self.voiceAgentText = message
-                    self.voiceAgentPhase = "failed"
-                    self.voiceHint = "Model unavailable"
-                    self.needsDisplay = true
-                    self.playVoiceAgentSystemFallback(message)
+                    self.showVoiceAgentFailure(error)
                 }
             }
         }
+    }
+
+    private func showVoiceAgentFailure(_ error: Error) {
+        let message = "Crow 暂时无法连接模型：\(Self.compactHint(error.localizedDescription))"
+        CrowMacLog("agent voice failed \(error.localizedDescription)")
+        resetVoiceAgentSpeechOutput(stopPlayback: true)
+        voiceAgentText = message
+        voiceAgentPhase = "failed"
+        voiceHint = "Model unavailable"
+        needsDisplay = true
+        playVoiceAgentSystemFallback(message)
     }
 
     private func resetVoiceAgentSpeechOutput(stopPlayback: Bool) {
@@ -6135,4 +6146,9 @@ private extension NSScreen {
         }
         return topStatusBarHeight
     }
+}
+
+/// Main-thread-only flag shared between a voice turn's stream callbacks.
+private final class VoiceTurnFlag: @unchecked Sendable {
+    var value = false
 }

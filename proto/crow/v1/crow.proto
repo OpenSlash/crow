@@ -195,4 +195,6 @@ message Settings {
   // Write-only. Never returned; see llm_api_key_set.
   string llm_api_key = 18;
   bool llm_api_key_set = 19;
+  // Long-term memory (profile in prompt + memory tools). Defaults to on.
+  bool memory_enabled = 20;
 }

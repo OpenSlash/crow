@@ -35,12 +35,12 @@ Crow supports two ways to reach model services. Users pick one in Settings.
 - [x] Island shows the activity label while the agent works
 - [ ] Per-activity icons on the island (design pending)
 
-## Phase 2 — Long-term memory
+## Phase 2 — Long-term memory ✅
 
-- [ ] Store at `~/Library/Application Support/Crow/memory/`: `PROFILE.md` + `topics/<topic>.md` + `journal/YYYY-MM-DD.md`
-- [ ] Auto `git commit` on every change when Git is available
-- [ ] Inject `PROFILE.md` into the system prompt; tools `memory_search`, `memory_read`, `memory_write`
-- [ ] Settings: view folder, turn memory off, clear
+- [x] Store at `~/Library/Application Support/Crow/memory/`: `PROFILE.md` + `topics/<topic>.md` + `journal/YYYY-MM-DD.md`
+- [x] Auto `git commit` on every change when Git is available
+- [x] Inject `PROFILE.md` into the system prompt; tools `memory_search`, `memory_read`, `memory_write`
+- [x] Settings: view folder, turn memory off, clear
 
 ## Phase 3 — Interruption
 

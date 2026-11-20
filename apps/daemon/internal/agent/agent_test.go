@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/crow/crow/apps/daemon/internal/llm"
+	"github.com/crow/crow/apps/daemon/internal/memory"
 )
 
 // scriptedProvider returns one scripted response per call and records requests.
@@ -150,5 +151,40 @@ func TestRespondNotConfigured(t *testing.T) {
 	h.ServeRespond(rec, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"input":"hi"}`)))
 	if rec.Code != http.StatusPreconditionFailed || !strings.Contains(rec.Body.String(), "provider_not_configured") {
 		t.Fatalf("code = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMemoryToolsAndProfile(t *testing.T) {
+	store := memory.Open(t.TempDir())
+	if _, err := store.Write("profile", "Name: Alex", false); err != nil {
+		t.Fatal(err)
+	}
+	p := &scriptedProvider{responses: []llm.Response{
+		call("memory_write", `{"path":"topics/coffee","content":"Oat latte"}`),
+		{Text: "记住了"},
+	}}
+	enabled := true
+	h := newHandler(p, 0).WithMemory(store, func() bool { return enabled })
+	if _, err := h.Respond(context.Background(), RespondRequest{Input: "我喜欢燕麦拿铁"}, Events{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.requests[0].System, "<profile>\nName: Alex\n</profile>") || len(p.requests[0].Tools) != 5 {
+		t.Fatalf("system = %q tools = %d", p.requests[0].System, len(p.requests[0].Tools))
+	}
+	if got := p.requests[1].Messages[2].Content; got != "Saved to topics/coffee.md" {
+		t.Fatalf("tool result = %q", got)
+	}
+	if got, _ := store.Read("topics/coffee"); got != "Oat latte\n" {
+		t.Fatalf("file = %q", got)
+	}
+
+	enabled = false
+	p.responses = []llm.Response{{Text: "ok"}}
+	if _, err := h.Respond(context.Background(), RespondRequest{Input: "hi"}, Events{}); err != nil {
+		t.Fatal(err)
+	}
+	last := p.requests[len(p.requests)-1]
+	if strings.Contains(last.System, "Alex") || len(last.Tools) != 2 {
+		t.Fatalf("memory off but system = %q tools = %d", last.System, len(last.Tools))
 	}
 }

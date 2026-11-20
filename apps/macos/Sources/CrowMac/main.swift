@@ -176,8 +176,10 @@ struct RuntimeSettings: Codable {
     var llmBaseUrl: String = ""
     var llmModel: String = ""
     var llmApiKeySet: Bool = false
+    var memoryEnabled: Bool = true
 
     enum CodingKeys: String, CodingKey {
+        case memoryEnabled
         case agentMode
         case llmProvider
         case llmBaseUrl
@@ -200,7 +202,8 @@ struct RuntimeSettings: Codable {
         sttLanguage = try container.decodeIfPresent(String.self, forKey: .sttLanguage) ?? ""
         ttsProvider = try container.decodeIfPresent(String.self, forKey: .ttsProvider) ?? ""
         ttsVoice = try container.decodeIfPresent(String.self, forKey: .ttsVoice) ?? ""
-        ttsStreaming = try container.decodeIfPresent(Bool.self, forKey: .ttsStreaming) ?? true
+        // Decoded from daemon responses, where proto3 JSON omits false bools.
+        ttsStreaming = try container.decodeIfPresent(Bool.self, forKey: .ttsStreaming) ?? false
         islandScreen = try container.decodeIfPresent(String.self, forKey: .islandScreen) ?? ""
         islandHotkey = try container.decodeIfPresent(String.self, forKey: .islandHotkey) ?? ""
         islandIdleCloseSeconds = try container.decodeIfPresent(String.self, forKey: .islandIdleCloseSeconds) ?? ""
@@ -210,6 +213,7 @@ struct RuntimeSettings: Codable {
         llmBaseUrl = try container.decodeIfPresent(String.self, forKey: .llmBaseUrl) ?? ""
         llmModel = try container.decodeIfPresent(String.self, forKey: .llmModel) ?? ""
         llmApiKeySet = try container.decodeIfPresent(Bool.self, forKey: .llmApiKeySet) ?? false
+        memoryEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? false
     }
 
     /// `apiKey` is write-only: pass it only when the user entered or switched to a key.
@@ -221,6 +225,7 @@ struct RuntimeSettings: Codable {
                 "llmBaseUrl": llmBaseUrl,
                 "llmModel": llmModel,
                 "llmApiKey": apiKey ?? "",
+                "memoryEnabled": memoryEnabled,
                 "sttLanguage": sttLanguage,
                 "ttsProvider": ttsProvider,
                 "ttsVoice": ttsVoice,
@@ -239,6 +244,7 @@ struct RuntimeSettings: Codable {
             "CROW_TTS_VOICE": ttsVoice,
             "CROW_OPENAI_TTS_VOICE": ttsVoice,
             "CROW_TTS_STREAMING": ttsStreaming ? "true" : "false",
+            "CROW_MEMORY_ENABLED": memoryEnabled ? "true" : "false",
             "CROW_ISLAND_SCREEN": islandScreen,
             "CROW_ISLAND_HOTKEY": islandHotkey,
             "CROW_ISLAND_IDLE_CLOSE_SECONDS": islandIdleCloseSeconds,
@@ -1261,6 +1267,7 @@ final class CrowWindowController: NSWindowController {
     private let llmModelField = NSTextField(string: "")
     private let llmAPIKeyField = NSSecureTextField(string: "")
     private let testModelButton = NSButton(title: "Test", target: nil, action: nil)
+    private let memoryEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let executorSummaryLabel = NSTextField(labelWithString: "")
     private let executorDetailLabel = NSTextField(labelWithString: "")
     private let executorListStack = NSStackView()
@@ -1550,6 +1557,16 @@ final class CrowWindowController: NSWindowController {
         mainCard.addArrangedSubview(settingsFieldRow(symbol: "key", title: "API key", field: llmAPIKeyField))
         mainCard.addArrangedSubview(makeSeparator())
         mainCard.addArrangedSubview(settingsActionsRow(symbol: "checkmark.seal", title: "Connection", buttons: [testModelButton]))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "brain", title: "Memory", subtitle: "Markdown files on this Mac, versioned with Git"))
+        mainCard.addArrangedSubview(makeSeparator())
+        mainCard.addArrangedSubview(settingsToggleRow(symbol: "brain.head.profile", title: "Remember things", button: memoryEnabledButton))
+        mainCard.addArrangedSubview(makeSeparator())
+        let openMemory = NSButton(title: "Open Folder", target: self, action: #selector(openMemoryFolder))
+        openMemory.bezelStyle = .rounded
+        let clearMemory = NSButton(title: "Clear…", target: self, action: #selector(clearMemory))
+        clearMemory.bezelStyle = .rounded
+        mainCard.addArrangedSubview(settingsActionsRow(symbol: "folder", title: "Files", buttons: [openMemory, clearMemory]))
         mainCard.addArrangedSubview(makeSeparator())
         mainCard.addArrangedSubview(settingsSectionHeader(symbol: "waveform", title: "Voice", subtitle: "Audio output"))
         mainCard.addArrangedSubview(makeSeparator())
@@ -2200,6 +2217,7 @@ final class CrowWindowController: NSWindowController {
         settings.ttsProvider = ttsProviderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.ttsVoice = selectedTTSVoice()
         settings.ttsStreaming = streamTTSButton.state == .on
+        settings.memoryEnabled = memoryEnabledButton.state == .on
         settings.islandScreen = islandScreenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandHotkey = islandHotkeyRecorder.hotKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandIdleCloseSeconds = islandIdleCloseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2220,6 +2238,39 @@ final class CrowWindowController: NSWindowController {
         var settings = model.settings
         settings.islandAvatarStyle = style
         try? model.persistRuntimeSettings(settings)
+    }
+
+    private var memoryDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Crow/memory", isDirectory: true)
+    }
+
+    @objc private func openMemoryFolder() {
+        do {
+            try FileManager.default.createDirectory(at: memoryDirectory, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(memoryDirectory)
+        } catch {
+            settingsStatusLabel.stringValue = "Could not open memory folder: \(error.localizedDescription)"
+        }
+    }
+
+    /// Deletes all memory files and their Git history.
+    @objc private func clearMemory() {
+        let alert = NSAlert()
+        alert.messageText = "Clear Crow's memory?"
+        alert.informativeText = "This deletes everything Crow remembers about you, including its history. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear Memory").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            if FileManager.default.fileExists(atPath: memoryDirectory.path) {
+                try FileManager.default.removeItem(at: memoryDirectory)
+            }
+            settingsStatusLabel.stringValue = "Memory cleared"
+        } catch {
+            settingsStatusLabel.stringValue = "Could not clear memory: \(error.localizedDescription)"
+        }
     }
 
     @objc private func openExecutorsFolder() {
@@ -2458,6 +2509,7 @@ final class CrowWindowController: NSWindowController {
             islandIdleCloseField.stringValue = settings.islandIdleCloseSeconds
         }
         streamTTSButton.state = settings.ttsStreaming ? .on : .off
+        memoryEnabledButton.state = settings.memoryEnabled ? .on : .off
         settingsStatusLabel.stringValue = model.settingsStatus
     }
 

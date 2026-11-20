@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/crow/crow/apps/daemon/internal/llm"
+	"github.com/crow/crow/apps/daemon/internal/memory"
 )
 
 type Message struct {
@@ -62,10 +63,11 @@ func (e Events) activity(a Activity) error {
 type ProviderFunc func() (llm.Provider, error)
 
 type Handler struct {
-	provider ProviderFunc
-	tools    map[string]Tool
-	specs    []llm.Tool
-	maxSteps int
+	provider      ProviderFunc
+	tools         []Tool
+	maxSteps      int
+	memory        *memory.Store
+	memoryEnabled func() bool
 }
 
 // DefaultMaxSteps caps model requests per turn.
@@ -75,13 +77,33 @@ func NewHandler(provider ProviderFunc, maxSteps int, tools ...Tool) *Handler {
 	if maxSteps <= 0 {
 		maxSteps = DefaultMaxSteps
 	}
-	h := &Handler{provider: provider, tools: map[string]Tool{}, maxSteps: maxSteps}
+	return &Handler{provider: provider, tools: tools, maxSteps: maxSteps}
+}
+
+// WithMemory adds long-term memory: the profile goes into the system prompt and
+// the memory tools are offered, whenever enabled reports true.
+func (h *Handler) WithMemory(store *memory.Store, enabled func() bool) *Handler {
+	h.memory = store
+	h.memoryEnabled = enabled
+	return h
+}
+
+// turn returns the system prompt and tools for one request.
+func (h *Handler) turn(req RespondRequest) (string, map[string]Tool, []llm.Tool) {
+	system := systemPrompt(req)
+	tools := h.tools
+	if h.memory != nil && (h.memoryEnabled == nil || h.memoryEnabled()) {
+		system += memoryPromptSection(h.memory)
+		tools = append(append([]Tool{}, tools...), MemoryTools(h.memory)...)
+	}
+	byName := make(map[string]Tool, len(tools))
+	specs := make([]llm.Tool, 0, len(tools))
 	for _, t := range tools {
 		spec := t.Spec()
-		h.tools[spec.Name] = t
-		h.specs = append(h.specs, spec)
+		byName[spec.Name] = t
+		specs = append(specs, spec)
 	}
-	return h
+	return system, byName, specs
 }
 
 // Respond runs the tool loop: call the model, run requested tools, feed results
@@ -104,6 +126,7 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (R
 		maxTokens = 900
 	}
 	messages := buildMessages(req)
+	system, tools, specs := h.turn(req)
 	base := RespondResult{Model: provider.Model(), Provider: provider.Name()}
 
 	for step := 0; step < h.maxSteps; step++ {
@@ -111,9 +134,9 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (R
 			return RespondResult{}, err
 		}
 		resp, err := provider.Stream(ctx, llm.Request{
-			System:      systemPrompt(req),
+			System:      system,
 			Messages:    messages,
-			Tools:       h.specs,
+			Tools:       specs,
 			MaxTokens:   maxTokens,
 			Temperature: temperature,
 		}, ev.delta)
@@ -127,7 +150,7 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (R
 
 		messages = append(messages, llm.Message{Role: "assistant", Content: resp.Text, ToolCalls: resp.ToolCalls})
 		for _, call := range resp.ToolCalls {
-			result := h.runTool(ctx, call, ev)
+			result := runTool(ctx, tools, call, ev)
 			if result.Handoff != nil {
 				return h.handoff(base, resp.Text, *result.Handoff, ev)
 			}
@@ -139,8 +162,8 @@ func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (R
 	return base, ev.delta(base.Text)
 }
 
-func (h *Handler) runTool(ctx context.Context, call llm.ToolCall, ev Events) ToolResult {
-	tool, ok := h.tools[call.Name]
+func runTool(ctx context.Context, tools map[string]Tool, call llm.ToolCall, ev Events) ToolResult {
+	tool, ok := tools[call.Name]
 	if !ok {
 		return ToolResult{Content: "Error: unknown tool " + call.Name}
 	}

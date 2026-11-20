@@ -1528,8 +1528,10 @@ type Settings struct {
 	LlmBaseUrl  string `protobuf:"bytes,16,opt,name=llm_base_url,json=llmBaseUrl,proto3" json:"llm_base_url,omitempty"`
 	LlmModel    string `protobuf:"bytes,17,opt,name=llm_model,json=llmModel,proto3" json:"llm_model,omitempty"`
 	// Write-only. Never returned; see llm_api_key_set.
-	LlmApiKey     string `protobuf:"bytes,18,opt,name=llm_api_key,json=llmApiKey,proto3" json:"llm_api_key,omitempty"`
-	LlmApiKeySet  bool   `protobuf:"varint,19,opt,name=llm_api_key_set,json=llmApiKeySet,proto3" json:"llm_api_key_set,omitempty"`
+	LlmApiKey    string `protobuf:"bytes,18,opt,name=llm_api_key,json=llmApiKey,proto3" json:"llm_api_key,omitempty"`
+	LlmApiKeySet bool   `protobuf:"varint,19,opt,name=llm_api_key_set,json=llmApiKeySet,proto3" json:"llm_api_key_set,omitempty"`
+	// Long-term memory (profile in prompt + memory tools). Defaults to on.
+	MemoryEnabled bool `protobuf:"varint,20,opt,name=memory_enabled,json=memoryEnabled,proto3" json:"memory_enabled,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1651,6 +1653,13 @@ func (x *Settings) GetLlmApiKey() string {
 func (x *Settings) GetLlmApiKeySet() bool {
 	if x != nil {
 		return x.LlmApiKeySet
+	}
+	return false
+}
+
+func (x *Settings) GetMemoryEnabled() bool {
+	if x != nil {
+		return x.MemoryEnabled
 	}
 	return false
 }
@@ -1777,7 +1786,7 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	" \x01(\tR\tdecidedAt\"\x14\n" +
 	"\x12GetSettingsRequest\"D\n" +
 	"\x13SaveSettingsRequest\x12-\n" +
-	"\bsettings\x18\x01 \x01(\v2\x11.crow.v1.SettingsR\bsettings\"\xc4\x04\n" +
+	"\bsettings\x18\x01 \x01(\v2\x11.crow.v1.SettingsR\bsettings\"\xeb\x04\n" +
 	"\bSettings\x12!\n" +
 	"\fstt_language\x18\a \x01(\tR\vsttLanguage\x12!\n" +
 	"\ftts_provider\x18\b \x01(\tR\vttsProvider\x12\x1b\n" +
@@ -1794,7 +1803,8 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	"llmBaseUrl\x12\x1b\n" +
 	"\tllm_model\x18\x11 \x01(\tR\bllmModel\x12\x1e\n" +
 	"\vllm_api_key\x18\x12 \x01(\tR\tllmApiKey\x12%\n" +
-	"\x0fllm_api_key_set\x18\x13 \x01(\bR\fllmApiKeySetJ\x04\b\x01\x10\aR\n" +
+	"\x0fllm_api_key_set\x18\x13 \x01(\bR\fllmApiKeySet\x12%\n" +
+	"\x0ememory_enabled\x18\x14 \x01(\bR\rmemoryEnabledJ\x04\b\x01\x10\aR\n" +
 	"codex_pathR\tcodex_cwdR\vcodex_modelR\x13codex_reuse_contextR\x15codex_approval_policyR\rcodex_sandbox2\xa1\x01\n" +
 	"\x12CrowRuntimeService\x12D\n" +
 	"\vGetSnapshot\x12\x1b.crow.v1.GetSnapshotRequest\x1a\x18.crow.v1.RuntimeSnapshot\x12E\n" +

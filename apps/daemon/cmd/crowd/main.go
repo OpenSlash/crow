@@ -27,6 +27,7 @@ import (
 	"github.com/crow/crow/apps/daemon/internal/config"
 	"github.com/crow/crow/apps/daemon/internal/executor"
 	"github.com/crow/crow/apps/daemon/internal/llm"
+	"github.com/crow/crow/apps/daemon/internal/memory"
 	"github.com/crow/crow/apps/daemon/internal/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -151,7 +152,8 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 
 	agentHandler := agent.NewHandler(func() (llm.Provider, error) {
 		return llm.New(llm.ConfigFromEnv())
-	}, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps), agent.DelegateToCodex())
+	}, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps), agent.DelegateToCodex()).
+		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) })
 	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
 }
@@ -689,6 +691,7 @@ func settingsFromEnv() *crowv1.Settings {
 		LlmBaseUrl:             firstNonEmptyEnv("CROW_LLM_BASE_URL"),
 		LlmModel:               firstNonEmptyEnv("CROW_LLM_MODEL"),
 		LlmApiKey:              firstNonEmptyEnv("CROW_LLM_API_KEY"),
+		MemoryEnabled:          boolEnvDefault("CROW_MEMORY_ENABLED", true),
 	}
 	applyRuntimeSettingsFile(settings)
 	applySettingsToEnv(settings)
@@ -712,6 +715,7 @@ func applySettingsToEnv(settings *crowv1.Settings) {
 	setEnvIfPresent("CROW_LLM_BASE_URL", settings.GetLlmBaseUrl())
 	setEnvIfPresent("CROW_LLM_MODEL", settings.GetLlmModel())
 	setEnvIfPresent("CROW_LLM_API_KEY", settings.GetLlmApiKey())
+	_ = os.Setenv("CROW_MEMORY_ENABLED", boolString(settings.GetMemoryEnabled()))
 }
 
 func setEnvIfPresent(key string, value string) {
@@ -799,6 +803,9 @@ func applyRuntimeSettingValues(settings *crowv1.Settings, values map[string]stri
 	}
 	if value := strings.TrimSpace(values["CROW_LLM_MODEL"]); value != "" {
 		settings.LlmModel = value
+	}
+	if value, ok := values["CROW_MEMORY_ENABLED"]; ok {
+		settings.MemoryEnabled = parseBoolSetting(value, settings.MemoryEnabled)
 	}
 }
 
