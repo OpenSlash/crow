@@ -2655,6 +2655,11 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
         guard shouldSpeakState(state) else {
             return
         }
+        // Don't talk over Crow's own reply; the approval panel is visible anyway.
+        if (state.phase ?? "") == "approval", islandView.isVoiceReplyActive {
+            CrowMacLog("approval prompt not spoken: voice reply in progress")
+            return
+        }
         rememberSpoken(spokenTextKey)
         CrowMacLog("speech enqueue provider=\(speechOutputProvider()) text=\(spokenTextKey)")
         // Synthesis takes a moment; the island must not start listening before the result is spoken.
@@ -2695,7 +2700,8 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
         case "failed":
             return localizedSpeech(prefixZH: "任务失败，需要你查看。", prefixEN: "Task failed and needs your review. ", body: humanReadableFailure(state.message))
         case "approval":
-            return localizedSpeech(prefixZH: "需要你的确认。", prefixEN: "Approval required. ", body: state.message)
+            // The action names are English internal labels; the panel shows the details.
+            return localizedSpeech(prefixZH: "需要你确认一下，请在灵动岛上点同意或拒绝。", prefixEN: "Please approve or reject on the island.", body: "")
         default:
             return nil
         }
@@ -3213,7 +3219,18 @@ final class CrowIslandView: NSView {
     /// Development aid: with CROW_ISLAND_SNAPSHOT=<file.png>, renders the island when an
     /// approval appears. It draws only Crow's own view: no screen capture.
     private func snapshotApprovalIfRequested() {
-        guard let path = ProcessInfo.processInfo.environment["CROW_ISLAND_SNAPSHOT"], !path.isEmpty else { return }
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["CROW_ISLAND_SNAPSHOT"], !path.isEmpty else { return }
+        // CROW_ISLAND_SNAPSHOT_VOICE=<text> reproduces an approval arriving over an open voice panel.
+        if let text = environment["CROW_ISLAND_SNAPSHOT_VOICE"], !text.isEmpty {
+            isAwake = true
+            isExpanded = true
+            expansionProgress = 1
+            didSubmitVoiceCommand = true
+            voiceAgentText = text
+            voiceAgentPhase = "running"
+            needsDisplay = true
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self, let rep = self.bitmapImageRepForCachingDisplay(in: self.bounds) else { return }
             self.cacheDisplay(in: self.bounds, to: rep)
@@ -3466,6 +3483,9 @@ final class CrowIslandView: NSView {
         needsDisplay = true
         playVoiceAgentResponse(text)
     }
+
+    /// Crow is generating or speaking a voice reply.
+    var isVoiceReplyActive: Bool { isVoiceAgentBusy || isSpeaking }
 
     /// Crow is waiting on the model or speaking.
     private var isVoiceAgentBusy: Bool {
