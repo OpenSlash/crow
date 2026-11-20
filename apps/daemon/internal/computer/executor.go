@@ -17,6 +17,7 @@ const Kind = "computer"
 
 const systemPrompt = `You operate the user's Mac to complete a task, using the computer tool.
 Start with a screenshot. Coordinates are pixels in the most recent full screenshot. Every action returns a fresh screenshot, the pointer position and the front window; check them before the next step.
+In app windows, call elements first: it numbers the window's controls and draws the numbers on a screenshot. Prefer click with element and set_value with element over coordinates; they are far more reliable. Element numbers expire at the next elements call.
 Use zoom to read small text or icons before clicking them; zoom images never change the coordinate space.
 To switch apps or windows, prefer windows + focus or open_app over clicking the Dock. Prefer keyboard shortcuts over hunting for small targets.
 Set screenshot to false only for steps whose result you do not need to see, such as typing into a field you just clicked.
@@ -223,12 +224,14 @@ func pruneScreenshots(messages []llm.Message, keep int) {
 }
 
 // readOnly actions only look; they need no approval and work in see-only mode.
-var readOnly = map[string]bool{"screenshot": true, "zoom": true, "windows": true, "wait": true}
+var readOnly = map[string]bool{"screenshot": true, "zoom": true, "windows": true, "elements": true, "wait": true}
 
 var actionLabels = map[string]string{
 	"screenshot": "Looking at the screen",
 	"zoom":       "Looking closer",
 	"windows":    "Listing windows",
+	"elements":   "Reading the window",
+	"set_value":  "Filling in",
 	"focus":      "Switching windows",
 	"click":      "Clicking",
 	"move":       "Moving the pointer",
@@ -255,7 +258,16 @@ func describe(action string, args map[string]any) string {
 	case "focus":
 		return strings.TrimSpace(fmt.Sprintf("Switch to %v %v", args["name"], firstNonEmpty(fmt.Sprint(args["title"]))))
 	case "click":
+		if element, ok := args["element"]; ok {
+			return fmt.Sprintf("%v click on element %v", firstNonEmpty(fmt.Sprint(args["button"]), "left"), element)
+		}
 		return fmt.Sprintf("%v click at (%v, %v)", firstNonEmpty(fmt.Sprint(args["button"]), "left"), args["x"], args["y"])
+	case "set_value":
+		text, _ := args["text"].(string)
+		if len([]rune(text)) > 80 {
+			text = string([]rune(text)[:80]) + "…"
+		}
+		return fmt.Sprintf("Set element %v to: %s", args["element"], text)
 	default:
 		data, _ := json.Marshal(args)
 		return action + " " + string(data)
@@ -263,15 +275,17 @@ func describe(action string, args map[string]any) string {
 }
 
 func toolSpec(seeOnly bool) llm.Tool {
-	actions := []string{"screenshot", "zoom", "windows", "click", "move", "drag", "type", "key", "scroll", "open_app", "focus", "wait"}
+	actions := []string{"screenshot", "elements", "zoom", "windows", "click", "set_value", "move", "drag", "type", "key", "scroll", "open_app", "focus", "wait"}
 	if seeOnly {
-		actions = []string{"screenshot", "zoom", "windows", "wait"}
+		actions = []string{"screenshot", "elements", "zoom", "windows", "wait"}
 	}
 	number := func(desc string) map[string]any { return map[string]any{"type": "number", "description": desc} }
 	return llm.Tool{
 		Name: "computer",
-		Description: "Control the Mac's main display. Actions: screenshot; zoom (x, y, width, height: a region of the latest screenshot at full detail); " +
-			"windows (list open windows with app, title and bounds); click (x, y, optional button left|right|middle, count 1-3); " +
+		Description: "Control the Mac's main display. Actions: screenshot; elements (number the front window's controls, listed and drawn on a screenshot); " +
+			"zoom (x, y, width, height: a region of the latest screenshot at full detail); " +
+			"windows (list open windows with app, title and bounds); click (element, or x and y; optional button left|right|middle, count 1-3); " +
+			"set_value (element, text: fill a text field directly); " +
 			"move (x, y); drag (x, y to to_x, to_y); type (text); key (keys like \"cmd+c\", \"return\", \"cmd+shift+4\"); " +
 			"scroll (x, y, direction up|down|left|right, amount in lines); open_app (name, e.g. \"Safari\"); " +
 			"focus (name of the app, optional title of its window); wait (seconds). " +
@@ -292,6 +306,7 @@ func toolSpec(seeOnly bool) llm.Tool {
 				"amount":     map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
 				"name":       map[string]any{"type": "string"},
 				"seconds":    number("Seconds to wait, up to 10."),
+				"element":    map[string]any{"type": "integer", "minimum": 1, "description": "Element number from the latest elements call."},
 				"width":      number("Zoom region width in screenshot pixels."),
 				"height":     number("Zoom region height in screenshot pixels."),
 				"title":      map[string]any{"type": "string", "description": "Window title (or part of it) for focus."},

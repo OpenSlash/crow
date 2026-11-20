@@ -44,6 +44,8 @@ final class CrowComputerUseHost {
     private var loop: Swift.Task<Void, Never>?
     private var lastPostedAt = Date.distantPast
     private var stopMonitors: [Any] = []
+    /// Elements numbered by the latest `elements` call.
+    private var elements: [Int: AXUIElement] = [:]
 
     func start(client: CrowRPCClient) {
         loop?.cancel()
@@ -120,6 +122,11 @@ final class CrowComputerUseHost {
             case "windows":
                 text = listWindows()
                 attachScreenshot = false
+            case "elements":
+                let found = collectElements()
+                text = describeElements(found)
+                attach(try await screenshot(marking: found), to: &result)
+                attachScreenshot = false
             default:
                 guard Self.hasAccessibility else {
                     Self.requestAccessibility()
@@ -145,9 +152,22 @@ final class CrowComputerUseHost {
     private func act(_ action: String, _ args: [String: Any]) async throws {
         switch action {
         case "click":
-            let point = try screenPoint(args, "x", "y")
             let count = max(1, min(3, (args["count"] as? NSNumber)?.intValue ?? 1))
-            click(at: point, button: args["button"] as? String ?? "left", count: count)
+            let button = args["button"] as? String ?? "left"
+            if let number = (args["element"] as? NSNumber)?.intValue {
+                let element = try cachedElement(number)
+                // A plain click on a pressable control uses AXPress: no pointer movement, works even if covered.
+                if button == "left", count == 1, AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
+                    break
+                }
+                guard let frame = elementFrame(element) else { throw ComputerUseError("Element \(number) is no longer on screen; call elements again") }
+                click(at: CGPoint(x: frame.midX, y: frame.midY), button: button, count: count)
+            } else {
+                click(at: try screenPoint(args, "x", "y"), button: button, count: count)
+            }
+        case "set_value":
+            guard let number = (args["element"] as? NSNumber)?.intValue else { throw ComputerUseError("element is required") }
+            try setValue(args["text"] as? String ?? "", on: try cachedElement(number))
         case "move":
             post(mouse: .mouseMoved, at: try screenPoint(args, "x", "y"), button: .left)
         case "drag":
@@ -221,13 +241,15 @@ final class CrowComputerUseHost {
         result["height"] = shot.height
     }
 
-    /// The whole main display, scaled to the screenshot coordinate space. The pointer is drawn in.
-    private func screenshot() async throws -> Shot {
+    /// The whole main display, scaled to the screenshot coordinate space. The pointer is drawn in;
+    /// `marking` draws numbered boxes around elements.
+    private func screenshot(marking marks: [FoundElement] = []) async throws -> Shot {
         let display = try await mainDisplay()
         let scale = screenshotScale
         return try await capture(display: display, region: nil,
                                  width: Int((CGFloat(display.width) * scale).rounded()),
-                                 height: Int((CGFloat(display.height) * scale).rounded()))
+                                 height: Int((CGFloat(display.height) * scale).rounded()),
+                                 marks: marks)
     }
 
     /// A region of the latest screenshot (in its pixels), captured again at up to full detail.
@@ -257,16 +279,19 @@ final class CrowComputerUseHost {
         return display
     }
 
-    private func capture(display: SCDisplay, region: CGRect?, width: Int, height: Int) async throws -> Shot {
+    private func capture(display: SCDisplay, region: CGRect?, width: Int, height: Int, marks: [FoundElement] = []) async throws -> Shot {
         let configuration = SCStreamConfiguration()
         if let region { configuration.sourceRect = region }
         configuration.width = width
         configuration.height = height
         configuration.showsCursor = true
-        let image = try await SCScreenshotManager.captureImage(
+        var image = try await SCScreenshotManager.captureImage(
             contentFilter: SCContentFilter(display: display, excludingWindows: []),
             configuration: configuration
         )
+        if !marks.isEmpty, let marked = draw(marks, on: image) {
+            image = marked
+        }
         guard let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else {
             throw ComputerUseError("Could not encode the screenshot")
         }
@@ -304,6 +329,158 @@ final class CrowComputerUseHost {
         var title: CFTypeRef?
         AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title)
         return title as? String
+    }
+
+    // MARK: Elements
+
+    struct FoundElement {
+        let number: Int
+        let role: String
+        let label: String
+        let frame: CGRect // screen points
+        let enabled: Bool
+    }
+
+    private static let interactiveRoles: Set<String> = [
+        "AXButton", "AXTextField", "AXTextArea", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXComboBox",
+        "AXMenuButton", "AXLink", "AXSlider", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle", "AXIncrementor",
+        "AXSearchField", "AXCell", "AXRow", "AXTab", "AXSegmentedControl", "AXColorWell", "AXDateField", "AXStepper",
+    ]
+
+    /// Walks the front window's accessibility tree for visible controls, within a time and count budget.
+    private func collectElements() -> [FoundElement] {
+        elements = [:]
+        guard let app = NSWorkspace.shared.frontmostApplication else { return [] }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 0.3)
+        var roots: [AXUIElement] = []
+        if let window: AXUIElement = attribute(appElement, kAXFocusedWindowAttribute) { roots.append(window) }
+        if let menuBar: AXUIElement = attribute(appElement, kAXMenuBarAttribute) { roots.append(menuBar) }
+        let deadline = Date().addingTimeInterval(1.5)
+        var found: [FoundElement] = []
+        var stack = roots.reversed().map { ($0, 0) }
+        while let (element, depth) = stack.popLast(), found.count < 150, Date() < deadline {
+            let role: String = attribute(element, kAXRoleAttribute) ?? ""
+            if Self.interactiveRoles.contains(role), let frame = elementFrame(element),
+               frame.width >= 3, frame.height >= 3, displayBounds.intersects(frame),
+               // Menu bar items only at the top level, not every hidden menu item.
+               !(role == "AXMenuItem" && depth > 3) {
+                let number = found.count + 1
+                elements[number] = element
+                let enabled: Bool = attribute(element, kAXEnabledAttribute) ?? true
+                found.append(FoundElement(number: number, role: role, label: elementLabel(element), frame: frame, enabled: enabled))
+            }
+            guard depth < 30, role != "AXMenu" else { continue }
+            let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) ?? []
+            stack.append(contentsOf: children.reversed().map { ($0, depth + 1) })
+        }
+        return found
+    }
+
+    private func describeElements(_ found: [FoundElement]) -> String {
+        guard !found.isEmpty else {
+            return "No accessible controls found in the front window; use coordinates from the screenshot."
+        }
+        let scale = screenshotScale
+        let lines = found.map { element -> String in
+            let (x, y) = screenshotPoint(element.frame.origin)
+            let role = element.role.replacingOccurrences(of: "AX", with: "").lowercased()
+            let label = element.label.isEmpty ? "" : " \"\(element.label)\""
+            return "[\(element.number)] \(role)\(label) at (\(x), \(y)) size \(Int(element.frame.width * scale))x\(Int(element.frame.height * scale))\(element.enabled ? "" : " (disabled)")"
+        }
+        return "Elements (numbers are drawn on the screenshot):\n" + lines.joined(separator: "\n")
+    }
+
+    private func elementLabel(_ element: AXUIElement) -> String {
+        for key in [kAXTitleAttribute, kAXDescriptionAttribute, kAXPlaceholderValueAttribute, kAXHelpAttribute] {
+            if let text: String = attribute(element, key), !text.isEmpty { return String(text.prefix(60)) }
+        }
+        if let value: String = attribute(element, kAXValueAttribute), !value.isEmpty {
+            return String(value.prefix(60))
+        }
+        if let titleElement: AXUIElement = attribute(element, kAXTitleUIElementAttribute),
+           let text: String = attribute(titleElement, kAXValueAttribute) {
+            return String(text.prefix(60))
+        }
+        return ""
+    }
+
+    private func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success, let value else { return nil }
+        if T.self == AXUIElement.self, CFGetTypeID(value) == AXUIElementGetTypeID() {
+            return (value as! AXUIElement) as? T
+        }
+        return value as? T
+    }
+
+    private func elementFrame(_ element: AXUIElement) -> CGRect? {
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let positionRef, let sizeRef,
+              CFGetTypeID(positionRef) == AXValueGetTypeID(), CFGetTypeID(sizeRef) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(positionRef as! AXValue, .cgPoint, &point)
+        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        return CGRect(origin: point, size: size)
+    }
+
+    private func cachedElement(_ number: Int) throws -> AXUIElement {
+        guard let element = elements[number] else {
+            throw ComputerUseError("No element \(number); call elements again")
+        }
+        return element
+    }
+
+    /// Fills a text control through accessibility, without the keyboard. Refuses password fields.
+    private func setValue(_ text: String, on element: AXUIElement) throws {
+        let subrole: String? = attribute(element, kAXSubroleAttribute)
+        if subrole == (kAXSecureTextFieldSubrole as String) {
+            throw ComputerUseError("This is a password field. Crow never types passwords; ask the user to do this step.")
+        }
+        AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFString) == .success else {
+            throw ComputerUseError("This element does not accept a value; click it and use type instead")
+        }
+    }
+
+    /// Draws numbered boxes for elements on a screenshot (Set-of-Mark).
+    private func draw(_ marks: [FoundElement], on image: CGImage) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Flip to top-left origin so screenshot coordinates apply directly.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        let scale = screenshotScale
+        let graphics = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphics
+        let color = NSColor.systemRed
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 11),
+            .foregroundColor: NSColor.white,
+        ]
+        for mark in marks {
+            let rect = CGRect(x: (mark.frame.minX - displayBounds.minX) * scale, y: (mark.frame.minY - displayBounds.minY) * scale,
+                              width: mark.frame.width * scale, height: mark.frame.height * scale)
+            context.setStrokeColor(color.withAlphaComponent(0.85).cgColor)
+            context.setLineWidth(1.5)
+            context.stroke(rect)
+            let label = "\(mark.number)" as NSString
+            let size = label.size(withAttributes: attributes)
+            let tag = CGRect(x: rect.minX, y: max(0, rect.minY - size.height), width: size.width + 4, height: size.height)
+            context.setFillColor(color.cgColor)
+            context.fill(tag)
+            label.draw(at: CGPoint(x: tag.minX + 2, y: tag.minY), withAttributes: attributes)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
     }
 
     // MARK: Windows

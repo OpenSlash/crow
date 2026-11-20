@@ -123,7 +123,7 @@ func TestSeeOnlyAndDeclined(t *testing.T) {
 	if strings.Join(actions, ",") != "release" || !strings.Contains(p.requests[1].Messages[2].Content, "see-only") {
 		t.Fatalf("see-only: actions = %v result = %q", actions, p.requests[1].Messages[2].Content)
 	}
-	if tools := p.requests[0].Tools[0].Parameters["properties"].(map[string]any)["action"].(map[string]any)["enum"].([]string); len(tools) != 4 {
+	if tools := p.requests[0].Tools[0].Parameters["properties"].(map[string]any)["action"].(map[string]any)["enum"].([]string); len(tools) != 5 {
 		t.Fatalf("see-only actions offered = %v", tools)
 	}
 
