@@ -175,7 +175,8 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 
 	agentHandler := agent.NewHandler(llmProvider, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps),
 		append([]agent.Tool{agent.DelegateToCodex(), agent.UseComputer(computerUseEnabled)},
-			agent.ReminderTools(reminderAdapter{runtime.store})...)...).
+			append(agent.ReminderTools(reminderAdapter{runtime.store}),
+				agent.OpenComputerUseSettings(func() bool { return !computerUseEnabled() }, runtime.openComputerUseSettings))...)...).
 		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) })
 	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
@@ -251,6 +252,19 @@ func (s *server) Perform(ctx context.Context, req *connect.Request[crowv1.Perfor
 		res.Image, res.ImageMediaType = images[0].Data, images[0].MediaType
 	}
 	return connect.NewResponse(res), nil
+}
+
+// openComputerUseSettings asks the app to show Settings at Computer use. The
+// command bridge is connected even while computer use is off.
+func (s *server) openComputerUseSettings(ctx context.Context) error {
+	res, err := s.bridge.Do(ctx, "open_settings", map[string]any{"section": "computer"})
+	if err != nil {
+		return err
+	}
+	if !res.GetOk() {
+		return errors.New(res.GetError())
+	}
+	return nil
 }
 
 // runReminderScheduler fires due reminders; the app picks them up from the snapshot.

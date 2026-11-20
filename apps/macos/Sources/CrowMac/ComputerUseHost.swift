@@ -41,6 +41,8 @@ final class CrowComputerUseHost {
     static let userWaitLimit: TimeInterval = 15
 
     var onStop: (() -> Void)?
+    /// Shows Crow's Settings at the Computer use section.
+    var onOpenSettings: (() -> Void)?
     private var loop: Swift.Task<Void, Never>?
     private var lastPostedAt = Date.distantPast
     private var stopMonitors: [Any] = []
@@ -106,9 +108,13 @@ final class CrowComputerUseHost {
                 releaseHeldInput()
                 return result
             }
+            if command.action == "open_settings" {
+                onOpenSettings?()
+                return result
+            }
             guard Self.hasScreenRecording else {
-                Self.requestScreenRecording()
-                throw ComputerUseError("Crow needs Screen Recording permission. Ask the user to allow it in System Settings > Privacy & Security, then try again.")
+                onOpenSettings?()
+                throw ComputerUseError("Crow needs Screen Recording permission. Crow Settings is now open at Computer use: tell the user to click Grant next to Screen Recording, allow Crow in System Settings, then restart Crow.")
             }
             var text = ""
             var attachScreenshot = true
@@ -129,8 +135,8 @@ final class CrowComputerUseHost {
                 attachScreenshot = false
             default:
                 guard Self.hasAccessibility else {
-                    Self.requestAccessibility()
-                    throw ComputerUseError("Crow needs Accessibility permission to use the mouse and keyboard. Ask the user to allow it in System Settings > Privacy & Security, then try again.")
+                    onOpenSettings?()
+                    throw ComputerUseError("Crow needs Accessibility permission to use the mouse and keyboard. Crow Settings is now open at Computer use: tell the user to click Grant next to Accessibility and allow Crow in System Settings.")
                 }
                 try await waitForUserToPause()
                 try await act(command.action, args)

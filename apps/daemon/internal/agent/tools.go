@@ -84,6 +84,39 @@ func (useComputer) Run(_ context.Context, args json.RawMessage) (ToolResult, err
 	return ToolResult{Handoff: &Handoff{Executor: "computer", Task: strings.TrimSpace(in.Task)}}, nil
 }
 
+type openComputerUseSettings struct {
+	disabled func() bool
+	open     func(context.Context) error
+}
+
+// OpenComputerUseSettings is offered while computer use is off: with the user's
+// agreement it opens Crow's settings at the Computer use section.
+func OpenComputerUseSettings(disabled func() bool, open func(context.Context) error) Tool {
+	return openComputerUseSettings{disabled, open}
+}
+
+func (t openComputerUseSettings) Enabled() bool { return t.disabled == nil || t.disabled() }
+
+func (openComputerUseSettings) Spec() llm.Tool {
+	return llm.Tool{
+		Name: "open_computer_use_settings",
+		Description: "Computer use (seeing the screen, mouse and keyboard) is turned off. When the user asks you to look at or operate their screen, " +
+			"tell them it is off and offer to open its settings; call this only after they agree. The settings explain the risks and hold the switch and the macOS permissions.",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+}
+
+func (openComputerUseSettings) Activity() Activity {
+	return Activity{Kind: ActivityRunning, Label: "Opening settings"}
+}
+
+func (t openComputerUseSettings) Run(ctx context.Context, _ json.RawMessage) (ToolResult, error) {
+	if err := t.open(ctx); err != nil {
+		return ToolResult{}, err
+	}
+	return ToolResult{Content: "Opened Crow Settings at Computer use. Tell the user to turn on \"Let Crow use this Mac\", grant Screen Recording and Accessibility there, then click Save Settings."}, nil
+}
+
 type delegateToCodex struct{}
 
 // DelegateToCodex hands coding, file and terminal work to the Codex executor.

@@ -228,3 +228,20 @@ func TestUseComputerOfferedOnlyWhenEnabled(t *testing.T) {
 		t.Fatalf("tools = %v / %v", p.requests[0].Tools, p.requests[1].Tools)
 	}
 }
+
+func TestOpenComputerUseSettingsOnlyWhileOff(t *testing.T) {
+	off := true
+	opened := 0
+	tool := OpenComputerUseSettings(func() bool { return off }, func(context.Context) error { opened++; return nil })
+	p := &scriptedProvider{responses: []llm.Response{{Text: "ok"}}}
+	h := NewHandler(func() (llm.Provider, error) { return p, nil }, 0, tool)
+	_, _ = h.Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	off = false
+	_, _ = h.Respond(context.Background(), RespondRequest{Input: "q"}, Events{})
+	if len(p.requests[0].Tools) != 1 || len(p.requests[1].Tools) != 0 {
+		t.Fatalf("tools = %v / %v", p.requests[0].Tools, p.requests[1].Tools)
+	}
+	if res, err := tool.Run(context.Background(), nil); err != nil || opened != 1 || !strings.Contains(res.Content, "Save Settings") {
+		t.Fatalf("run = %+v %v", res, err)
+	}
+}

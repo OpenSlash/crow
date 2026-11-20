@@ -797,6 +797,8 @@ final class CrowAppModel: ObservableObject {
     private let computerUse = CrowComputerUseHost()
     /// Speaks a reminder on the island; set by the app delegate.
     var reminderHandler: ((String) -> Void)?
+    /// Shows Settings at Computer use; set by the app delegate.
+    var openComputerUseSettingsHandler: (() -> Void)?
     private var announcedReminders: Set<String> = []
     private var client: CrowRPCClient?
     private var refreshTimer: Timer?
@@ -1008,6 +1010,7 @@ final class CrowAppModel: ObservableObject {
         let client = CrowRPCClient(session: session)
         self.client = client
         computerUse.onStop = { [weak self] in self?.cancelActiveTask() }
+        computerUse.onOpenSettings = { [weak self] in self?.openComputerUseSettingsHandler?() }
         computerUse.start(client: client)
         await refresh()
     }
@@ -1495,6 +1498,8 @@ final class CrowWindowController: NSWindowController {
     private let computerSeeOnlyButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let computerUseEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private var lastRenderedSettings: RuntimeSettings?
+    private weak var settingsScroll: NSScrollView?
+    private weak var computerUseCard: NSView?
     private let screenRecordingButton = NSButton(title: "Grant", target: nil, action: nil)
     private let accessibilityButton = NSButton(title: "Grant", target: nil, action: nil)
     private let executorSummaryLabel = NSTextField(labelWithString: "")
@@ -1850,6 +1855,7 @@ final class CrowWindowController: NSWindowController {
             ]
         )
 
+        computerUseCard = computer
         let sections = NSStackView(views: [model, memory, computer, approvals, voice])
         sections.orientation = .vertical
         sections.alignment = .centerX
@@ -1878,6 +1884,7 @@ final class CrowWindowController: NSWindowController {
             scroll.heightAnchor.constraint(equalToConstant: 400),
         ])
         settingsPage.addArrangedSubview(scroll)
+        settingsScroll = scroll
 
         let actions = NSStackView()
         actions.orientation = .horizontal
@@ -2524,6 +2531,18 @@ final class CrowWindowController: NSWindowController {
         model.createTask()
     }
 
+    /// Switches to Settings and scrolls to the Computer use section.
+    func showComputerUseSettings() {
+        viewControl.selectedSegment = MainView.settings.rawValue
+        switchMainView()
+        window?.contentView?.layoutSubtreeIfNeeded()
+        guard let scroll = settingsScroll, let card = computerUseCard, let document = scroll.documentView else { return }
+        let top = card.convert(card.bounds, to: document).minY // the document is flipped
+        let maxY = max(0, document.frame.height - scroll.contentView.bounds.height)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: min(maxY, max(0, top - 8))))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
     /// Development aid: with CROW_SETTINGS_SNAPSHOT=<dir>, renders the settings page
     /// (top, middle, bottom) to PNGs. It draws only Crow's own window: no screen capture.
     private func scheduleSettingsSnapshotIfRequested() {
@@ -2533,9 +2552,12 @@ final class CrowWindowController: NSWindowController {
             self.viewControl.selectedSegment = MainView.settings.rawValue
             self.switchMainView()
             let scroll = self.settingsPage.arrangedSubviews.compactMap { $0 as? NSScrollView }.first
+            let jumpToComputerUse = ProcessInfo.processInfo.environment["CROW_SETTINGS_SNAPSHOT_SECTION"] == "computer"
             for (index, fraction) in [0.0, 0.5, 1.0].enumerated() {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1 + Double(index)) {
-                    if let scroll, let document = scroll.documentView {
+                    if jumpToComputerUse {
+                        self.showComputerUseSettings()
+                    } else if let scroll, let document = scroll.documentView {
                         let maxY = max(0, document.frame.height - scroll.contentView.bounds.height)
                         scroll.contentView.scroll(to: NSPoint(x: 0, y: maxY * fraction))
                         scroll.reflectScrolledClipView(scroll.contentView)
@@ -3168,6 +3190,10 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         }
         model.reminderHandler = { [weak self] text in
             self?.islandController?.announceReminder(text)
+        }
+        model.openComputerUseSettingsHandler = { [weak self] in
+            self?.showWindow()
+            self?.windowController?.showComputerUseSettings()
         }
         CrowMacLog("island applicationDidFinishLaunching")
         islandController?.applicationDidFinishLaunching(notification)
