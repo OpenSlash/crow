@@ -2450,6 +2450,11 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
     private var panelHeight: CGFloat = 210
     private var panel: CrowPanel!
     private var islandView: CrowIslandView!
+
+    /// Opens the island and speaks a reminder.
+    func announceReminder(_ text: String) {
+        islandView?.announceReminder(text)
+    }
     private var stateTimer: Timer?
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var realtimeSpeaker: CrowOpenAIRealtimeSpeaker?
@@ -3389,6 +3394,25 @@ final class CrowIslandView: NSView {
             return
         }
         wakeVoicePanel()
+    }
+
+    /// Opens the island and speaks a reminder, unless the user is talking to Crow,
+    /// in which case the notification alone carries it.
+    func announceReminder(_ text: String) {
+        guard !isRecording, !isTranscribing, !isVoiceAgentBusy else {
+            CrowMacLog("reminder not spoken: island busy")
+            return
+        }
+        cancelAutoClose()
+        cancelContinueListening()
+        isVoiceConversationActive = false
+        isAwake = true
+        isExpanded = true
+        lastVoiceUserText = ""
+        voiceAgentText = "⏰ " + text
+        voiceHint = "Reminder"
+        needsDisplay = true
+        playVoiceAgentResponse(text)
     }
 
     /// Crow is waiting on the model or speaking.

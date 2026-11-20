@@ -35,11 +35,13 @@ struct RuntimeSnapshot: Decodable {
     let state: RuntimeState?
     let recentTasks: [CrowTask]
     let pendingApprovals: [Approval]
+    let dueReminders: [CrowReminder]
 
     enum CodingKeys: String, CodingKey {
         case state
         case recentTasks
         case pendingApprovals
+        case dueReminders
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +49,24 @@ struct RuntimeSnapshot: Decodable {
         state = try container.decodeIfPresent(RuntimeState.self, forKey: .state)
         recentTasks = try container.decodeIfPresent([CrowTask].self, forKey: .recentTasks) ?? []
         pendingApprovals = try container.decodeIfPresent([Approval].self, forKey: .pendingApprovals) ?? []
+        dueReminders = try container.decodeIfPresent([CrowReminder].self, forKey: .dueReminders) ?? []
+    }
+}
+
+struct CrowReminder: Decodable {
+    let id: String
+    let text: String
+    let firedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, text, firedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        firedAt = try container.decodeIfPresent(String.self, forKey: .firedAt) ?? ""
     }
 }
 
@@ -665,6 +685,10 @@ final class CrowRPCClient {
         ])
     }
 
+    func ackReminder(id: String) async throws {
+        let _: CrowEmptyResponse = try await unary("/crow.v1.ReminderService/AckReminder", body: ["id": id])
+    }
+
     func listGrants() async throws -> ApprovalGrantList {
         try await unary("/crow.v1.ApprovalService/ListGrants", body: [:])
     }
@@ -756,6 +780,9 @@ final class CrowAppModel: ObservableObject {
 
     private let supervisor = CrowDaemonSupervisor()
     private let computerUse = CrowComputerUseHost()
+    /// Speaks a reminder on the island; set by the app delegate.
+    var reminderHandler: ((String) -> Void)?
+    private var announcedReminders: Set<String> = []
     private var client: CrowRPCClient?
     private var refreshTimer: Timer?
     private var activeTaskTimer: Timer?
@@ -970,7 +997,24 @@ final class CrowAppModel: ObservableObject {
         await refresh()
     }
 
+    /// Shows each newly fired reminder once, then acknowledges it so it leaves the snapshot.
+    /// Reminders that fired long ago (Crow was not running) only get a notification.
+    private func announceReminders(_ reminders: [CrowReminder]) {
+        for reminder in reminders where !announcedReminders.contains(reminder.id) {
+            announcedReminders.insert(reminder.id)
+            let firedAt = ISO8601DateFormatter().date(from: reminder.firedAt) ?? Date()
+            CrowReminderNotifier.post(reminder.text, id: reminder.id)
+            if Date().timeIntervalSince(firedAt) < 10 * 60 {
+                reminderHandler?(reminder.text)
+            }
+            Swift.Task { [weak self] in
+                try? await self?.client?.ackReminder(id: reminder.id)
+            }
+        }
+    }
+
     private func apply(_ snapshot: RuntimeSnapshot) {
+        announceReminders(snapshot.dueReminders)
         if let state = snapshot.state {
             statusText = state.title.isEmpty ? "Crow" : state.title
             detailText = state.message.isEmpty ? state.phase : state.message
@@ -3017,6 +3061,9 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         }
         islandController?.voiceCommandHandler = { [weak model] text, mode in
             model?.createTask(command: text, mode: mode)
+        }
+        model.reminderHandler = { [weak self] text in
+            self?.islandController?.announceReminder(text)
         }
         CrowMacLog("island applicationDidFinishLaunching")
         islandController?.applicationDidFinishLaunching(notification)

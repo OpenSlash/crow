@@ -85,11 +85,12 @@ Off by default: Settings → "Let Crow use this Mac" shows a risk notice before 
   - [x] Never handle logins, passwords or payments (prompt rule; typing into password fields is refused)
   - [x] Only user-originated input can trigger computer use (voice/command turns only)
 
-## Phase 6 — Reminders
+## Phase 6 — Reminders ✅
 
-- [ ] SQLite `reminders` table + scheduler in the daemon
-- [ ] Tools `reminder_create`, `reminder_list`, `reminder_cancel`
-- [ ] Fire via island + macOS notification
+- [x] SQLite `reminders` table + scheduler in the daemon (checks every 5 s)
+- [x] Tools `reminder_create` (`at` "YYYY-MM-DD HH:MM" / "HH:MM", or `in_minutes`), `reminder_list`, `reminder_cancel`; the system prompt carries the current local time
+- [x] Fire via island (spoken) + macOS notification; fired reminders stay in the runtime snapshot until the app acknowledges them, and ones that fired while Crow was off only notify
+- [ ] Repeating reminders
 
 ## Later
 

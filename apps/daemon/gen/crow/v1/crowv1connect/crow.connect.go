@@ -29,6 +29,8 @@ const (
 	VoiceServiceName = "crow.v1.VoiceService"
 	// ComputerServiceName is the fully-qualified name of the ComputerService service.
 	ComputerServiceName = "crow.v1.ComputerService"
+	// ReminderServiceName is the fully-qualified name of the ReminderService service.
+	ReminderServiceName = "crow.v1.ReminderService"
 	// ApprovalServiceName is the fully-qualified name of the ApprovalService service.
 	ApprovalServiceName = "crow.v1.ApprovalService"
 	// SettingsServiceName is the fully-qualified name of the SettingsService service.
@@ -76,6 +78,15 @@ const (
 	ComputerServiceSubmitResultProcedure = "/crow.v1.ComputerService/SubmitResult"
 	// ComputerServicePerformProcedure is the fully-qualified name of the ComputerService's Perform RPC.
 	ComputerServicePerformProcedure = "/crow.v1.ComputerService/Perform"
+	// ReminderServiceListRemindersProcedure is the fully-qualified name of the ReminderService's
+	// ListReminders RPC.
+	ReminderServiceListRemindersProcedure = "/crow.v1.ReminderService/ListReminders"
+	// ReminderServiceCancelReminderProcedure is the fully-qualified name of the ReminderService's
+	// CancelReminder RPC.
+	ReminderServiceCancelReminderProcedure = "/crow.v1.ReminderService/CancelReminder"
+	// ReminderServiceAckReminderProcedure is the fully-qualified name of the ReminderService's
+	// AckReminder RPC.
+	ReminderServiceAckReminderProcedure = "/crow.v1.ReminderService/AckReminder"
 	// ApprovalServiceListPendingApprovalsProcedure is the fully-qualified name of the ApprovalService's
 	// ListPendingApprovals RPC.
 	ApprovalServiceListPendingApprovalsProcedure = "/crow.v1.ApprovalService/ListPendingApprovals"
@@ -612,6 +623,130 @@ func (UnimplementedComputerServiceHandler) SubmitResult(context.Context, *connec
 
 func (UnimplementedComputerServiceHandler) Perform(context.Context, *connect.Request[v1.PerformComputerActionRequest]) (*connect.Response[v1.PerformComputerActionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ComputerService.Perform is not implemented"))
+}
+
+// ReminderServiceClient is a client for the crow.v1.ReminderService service.
+type ReminderServiceClient interface {
+	ListReminders(context.Context, *connect.Request[v1.ListRemindersRequest]) (*connect.Response[v1.ListRemindersResponse], error)
+	CancelReminder(context.Context, *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error)
+	// The app showed a fired reminder; it leaves the snapshot.
+	AckReminder(context.Context, *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error)
+}
+
+// NewReminderServiceClient constructs a client for the crow.v1.ReminderService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewReminderServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ReminderServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	reminderServiceMethods := v1.File_crow_v1_crow_proto.Services().ByName("ReminderService").Methods()
+	return &reminderServiceClient{
+		listReminders: connect.NewClient[v1.ListRemindersRequest, v1.ListRemindersResponse](
+			httpClient,
+			baseURL+ReminderServiceListRemindersProcedure,
+			connect.WithSchema(reminderServiceMethods.ByName("ListReminders")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelReminder: connect.NewClient[v1.ReminderRequest, v1.Reminder](
+			httpClient,
+			baseURL+ReminderServiceCancelReminderProcedure,
+			connect.WithSchema(reminderServiceMethods.ByName("CancelReminder")),
+			connect.WithClientOptions(opts...),
+		),
+		ackReminder: connect.NewClient[v1.ReminderRequest, v1.Reminder](
+			httpClient,
+			baseURL+ReminderServiceAckReminderProcedure,
+			connect.WithSchema(reminderServiceMethods.ByName("AckReminder")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// reminderServiceClient implements ReminderServiceClient.
+type reminderServiceClient struct {
+	listReminders  *connect.Client[v1.ListRemindersRequest, v1.ListRemindersResponse]
+	cancelReminder *connect.Client[v1.ReminderRequest, v1.Reminder]
+	ackReminder    *connect.Client[v1.ReminderRequest, v1.Reminder]
+}
+
+// ListReminders calls crow.v1.ReminderService.ListReminders.
+func (c *reminderServiceClient) ListReminders(ctx context.Context, req *connect.Request[v1.ListRemindersRequest]) (*connect.Response[v1.ListRemindersResponse], error) {
+	return c.listReminders.CallUnary(ctx, req)
+}
+
+// CancelReminder calls crow.v1.ReminderService.CancelReminder.
+func (c *reminderServiceClient) CancelReminder(ctx context.Context, req *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error) {
+	return c.cancelReminder.CallUnary(ctx, req)
+}
+
+// AckReminder calls crow.v1.ReminderService.AckReminder.
+func (c *reminderServiceClient) AckReminder(ctx context.Context, req *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error) {
+	return c.ackReminder.CallUnary(ctx, req)
+}
+
+// ReminderServiceHandler is an implementation of the crow.v1.ReminderService service.
+type ReminderServiceHandler interface {
+	ListReminders(context.Context, *connect.Request[v1.ListRemindersRequest]) (*connect.Response[v1.ListRemindersResponse], error)
+	CancelReminder(context.Context, *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error)
+	// The app showed a fired reminder; it leaves the snapshot.
+	AckReminder(context.Context, *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error)
+}
+
+// NewReminderServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewReminderServiceHandler(svc ReminderServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	reminderServiceMethods := v1.File_crow_v1_crow_proto.Services().ByName("ReminderService").Methods()
+	reminderServiceListRemindersHandler := connect.NewUnaryHandler(
+		ReminderServiceListRemindersProcedure,
+		svc.ListReminders,
+		connect.WithSchema(reminderServiceMethods.ByName("ListReminders")),
+		connect.WithHandlerOptions(opts...),
+	)
+	reminderServiceCancelReminderHandler := connect.NewUnaryHandler(
+		ReminderServiceCancelReminderProcedure,
+		svc.CancelReminder,
+		connect.WithSchema(reminderServiceMethods.ByName("CancelReminder")),
+		connect.WithHandlerOptions(opts...),
+	)
+	reminderServiceAckReminderHandler := connect.NewUnaryHandler(
+		ReminderServiceAckReminderProcedure,
+		svc.AckReminder,
+		connect.WithSchema(reminderServiceMethods.ByName("AckReminder")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/crow.v1.ReminderService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ReminderServiceListRemindersProcedure:
+			reminderServiceListRemindersHandler.ServeHTTP(w, r)
+		case ReminderServiceCancelReminderProcedure:
+			reminderServiceCancelReminderHandler.ServeHTTP(w, r)
+		case ReminderServiceAckReminderProcedure:
+			reminderServiceAckReminderHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedReminderServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedReminderServiceHandler struct{}
+
+func (UnimplementedReminderServiceHandler) ListReminders(context.Context, *connect.Request[v1.ListRemindersRequest]) (*connect.Response[v1.ListRemindersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ReminderService.ListReminders is not implemented"))
+}
+
+func (UnimplementedReminderServiceHandler) CancelReminder(context.Context, *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ReminderService.CancelReminder is not implemented"))
+}
+
+func (UnimplementedReminderServiceHandler) AckReminder(context.Context, *connect.Request[v1.ReminderRequest]) (*connect.Response[v1.Reminder], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.ReminderService.AckReminder is not implemented"))
 }
 
 // ApprovalServiceClient is a client for the crow.v1.ApprovalService service.

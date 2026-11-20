@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -99,6 +100,16 @@ func (s *Store) Migrate() error {
 			expires_at TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_approval_grants_scope_expires ON approval_grants(scope, expires_at);`,
+		`CREATE TABLE IF NOT EXISTS reminders (
+			id TEXT PRIMARY KEY,
+			text TEXT NOT NULL,
+			due_at TEXT NOT NULL,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			fired_at TEXT NOT NULL DEFAULT '',
+			acked INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_reminders_status_due ON reminders(status, due_at);`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -444,4 +455,86 @@ func (s *Store) RevokeGrants(scope string) error {
 	}
 	_, err := s.db.Exec(`DELETE FROM approval_grants WHERE scope = ?`, scope)
 	return err
+}
+
+// Reminder times are stored as UTC RFC 3339, like grants, so they compare as strings.
+
+func (s *Store) CreateReminder(text string, dueAt, now time.Time) (*crowv1.Reminder, error) {
+	r := &crowv1.Reminder{
+		Id:        fmt.Sprintf("rem-%d", now.UnixNano()),
+		Text:      text,
+		DueAt:     grantTime(dueAt),
+		Status:    "pending",
+		CreatedAt: grantTime(now),
+	}
+	_, err := s.db.Exec(`INSERT INTO reminders (id, text, due_at, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+		r.Id, r.Text, r.DueAt, r.Status, r.CreatedAt)
+	return r, err
+}
+
+func (s *Store) queryReminders(where string, args ...any) ([]*crowv1.Reminder, error) {
+	rows, err := s.db.Query(`SELECT id, text, due_at, status, created_at, fired_at FROM reminders WHERE `+where+` ORDER BY due_at`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reminders := []*crowv1.Reminder{}
+	for rows.Next() {
+		r := &crowv1.Reminder{}
+		if err := rows.Scan(&r.Id, &r.Text, &r.DueAt, &r.Status, &r.CreatedAt, &r.FiredAt); err != nil {
+			return nil, err
+		}
+		reminders = append(reminders, r)
+	}
+	return reminders, rows.Err()
+}
+
+func (s *Store) PendingReminders() ([]*crowv1.Reminder, error) {
+	return s.queryReminders(`status = 'pending'`)
+}
+
+// UnackedReminders are fired reminders the app has not shown yet.
+func (s *Store) UnackedReminders() ([]*crowv1.Reminder, error) {
+	return s.queryReminders(`status = 'fired' AND acked = 0`)
+}
+
+// FireDueReminders marks pending reminders due by now as fired and returns them.
+func (s *Store) FireDueReminders(now time.Time) ([]*crowv1.Reminder, error) {
+	due, err := s.queryReminders(`status = 'pending' AND due_at <= ?`, grantTime(now))
+	if err != nil || len(due) == 0 {
+		return due, err
+	}
+	for _, r := range due {
+		if _, err := s.db.Exec(`UPDATE reminders SET status = 'fired', fired_at = ? WHERE id = ? AND status = 'pending'`, grantTime(now), r.Id); err != nil {
+			return nil, err
+		}
+		r.Status, r.FiredAt = "fired", grantTime(now)
+	}
+	return due, nil
+}
+
+// CancelReminder cancels a pending reminder; it reports false if none was pending.
+func (s *Store) CancelReminder(id string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE reminders SET status = 'cancelled' WHERE id = ? AND status = 'pending'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+func (s *Store) AckReminder(id string) error {
+	_, err := s.db.Exec(`UPDATE reminders SET acked = 1 WHERE id = ?`, id)
+	return err
+}
+
+func (s *Store) GetReminder(id string) (*crowv1.Reminder, error) {
+	reminders, err := s.queryReminders(`id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(reminders) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return reminders[0], nil
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/crow/crow/apps/daemon/internal/llm"
 )
@@ -12,8 +13,13 @@ Answer directly and concisely in the user's language; replies are often spoken a
 Use the provided tools when a request needs them. For local files, code, the terminal or long-running work, call delegate_to_codex instead of answering. To act in an app on screen, call use_computer.
 Do not claim you performed local actions unless a tool result says so.`
 
+// now is the clock; tests replace it.
+var now = time.Now
+
 func systemPrompt(req RespondRequest) string {
-	prompt := basePrompt
+	current := now()
+	// The current time lets the model resolve "at 3 pm" or "tomorrow".
+	prompt := basePrompt + "\n\nCurrent local time: " + current.Format("Monday 2006-01-02 15:04 MST (UTC-07:00)") + "."
 	if req.Mode != "" || len(req.Context) > 0 {
 		contextJSON, _ := json.Marshal(req.Context)
 		prompt += "\n\nmode=" + strings.TrimSpace(req.Mode) + "\ncontext=" + string(contextJSON)

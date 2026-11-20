@@ -116,6 +116,9 @@ func main() {
 	defer storage.Close()
 
 	runtime := newServer(storage)
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	go runtime.runReminderScheduler(schedulerCtx, 5*time.Second)
 	mux := http.NewServeMux()
 	register(mux, runtime, token)
 
@@ -166,10 +169,13 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 	mux.Handle(path, handler)
 	path, handler = crowv1connect.NewComputerServiceHandler(runtime, interceptors)
 	mux.Handle(path, handler)
+	path, handler = crowv1connect.NewReminderServiceHandler(runtime, interceptors)
+	mux.Handle(path, handler)
 	mux.HandleFunc("/v1/executors", runtime.executorsHTTPHandler(token))
 
 	agentHandler := agent.NewHandler(llmProvider, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps),
-		agent.DelegateToCodex(), agent.UseComputer(computerUseEnabled)).
+		append([]agent.Tool{agent.DelegateToCodex(), agent.UseComputer(computerUseEnabled)},
+			agent.ReminderTools(reminderAdapter{runtime.store})...)...).
 		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) })
 	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
@@ -233,6 +239,88 @@ func (s *server) Perform(ctx context.Context, req *connect.Request[crowv1.Perfor
 		res.Image, res.ImageMediaType = images[0].Data, images[0].MediaType
 	}
 	return connect.NewResponse(res), nil
+}
+
+// runReminderScheduler fires due reminders; the app picks them up from the snapshot.
+func (s *server) runReminderScheduler(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		if fired, err := s.store.FireDueReminders(time.Now()); err != nil {
+			log.Printf("fire reminders failed: %v", err)
+		} else {
+			for _, r := range fired {
+				log.Printf("reminder %s fired", r.GetId())
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *server) ListReminders(ctx context.Context, req *connect.Request[crowv1.ListRemindersRequest]) (*connect.Response[crowv1.ListRemindersResponse], error) {
+	reminders, err := s.store.PendingReminders()
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&crowv1.ListRemindersResponse{Reminders: reminders}), nil
+}
+
+func (s *server) CancelReminder(ctx context.Context, req *connect.Request[crowv1.ReminderRequest]) (*connect.Response[crowv1.Reminder], error) {
+	ok, err := s.store.CancelReminder(req.Msg.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("reminder is not pending"))
+	}
+	return s.reminderResponse(req.Msg.GetId())
+}
+
+func (s *server) AckReminder(ctx context.Context, req *connect.Request[crowv1.ReminderRequest]) (*connect.Response[crowv1.Reminder], error) {
+	if err := s.store.AckReminder(req.Msg.GetId()); err != nil {
+		return nil, err
+	}
+	return s.reminderResponse(req.Msg.GetId())
+}
+
+func (s *server) reminderResponse(id string) (*connect.Response[crowv1.Reminder], error) {
+	r, err := s.store.GetReminder(id)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("reminder not found"))
+	}
+	return connect.NewResponse(r), nil
+}
+
+// reminderAdapter lets the agent's reminder tools use the SQLite store.
+type reminderAdapter struct{ store *store.Store }
+
+func (a reminderAdapter) CreateReminder(text string, dueAt time.Time) (agent.Reminder, error) {
+	r, err := a.store.CreateReminder(text, dueAt, time.Now())
+	if err != nil {
+		return agent.Reminder{}, err
+	}
+	return agent.Reminder{ID: r.GetId(), Text: r.GetText(), DueAt: dueAt}, nil
+}
+
+func (a reminderAdapter) PendingReminders() ([]agent.Reminder, error) {
+	reminders, err := a.store.PendingReminders()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agent.Reminder, 0, len(reminders))
+	for _, r := range reminders {
+		due, _ := time.Parse(time.RFC3339, r.GetDueAt())
+		out = append(out, agent.Reminder{ID: r.GetId(), Text: r.GetText(), DueAt: due})
+	}
+	return out, nil
+}
+
+func (a reminderAdapter) CancelReminder(id string) (bool, error) {
+	return a.store.CancelReminder(id)
 }
 
 func intEnv(key string, fallback int) int {
@@ -327,10 +415,16 @@ func (s *server) GetSnapshot(ctx context.Context, req *connect.Request[crowv1.Ge
 	state.PendingApprovals = int32(len(approvals))
 	s.mu.Unlock()
 
+	due, err := s.store.UnackedReminders()
+	if err != nil {
+		return nil, err
+	}
+
 	return connect.NewResponse(&crowv1.RuntimeSnapshot{
 		State:            state,
 		RecentTasks:      tasks,
 		PendingApprovals: approvals,
+		DueReminders:     due,
 	}), nil
 }
 

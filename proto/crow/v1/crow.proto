@@ -33,6 +33,14 @@ service ComputerService {
   rpc Perform(PerformComputerActionRequest) returns (PerformComputerActionResponse);
 }
 
+// Reminders are created by the agent's reminder tools; the app shows them when due.
+service ReminderService {
+  rpc ListReminders(ListRemindersRequest) returns (ListRemindersResponse);
+  rpc CancelReminder(ReminderRequest) returns (Reminder);
+  // The app showed a fired reminder; it leaves the snapshot.
+  rpc AckReminder(ReminderRequest) returns (Reminder);
+}
+
 service ApprovalService {
   rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
   rpc DecideApproval(DecideApprovalRequest) returns (Approval);
@@ -55,6 +63,28 @@ message RuntimeSnapshot {
   RuntimeState state = 1;
   repeated Task recent_tasks = 2;
   repeated Approval pending_approvals = 3;
+  // Reminders that came due and the app has not acknowledged yet.
+  repeated Reminder due_reminders = 4;
+}
+
+message Reminder {
+  string id = 1;
+  string text = 2;
+  string due_at = 3;
+  // pending, fired or cancelled
+  string status = 4;
+  string created_at = 5;
+  string fired_at = 6;
+}
+
+message ListRemindersRequest {}
+
+message ListRemindersResponse {
+  repeated Reminder reminders = 1;
+}
+
+message ReminderRequest {
+  string id = 1;
 }
 
 message RuntimeEvent {
