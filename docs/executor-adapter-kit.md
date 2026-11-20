@@ -54,13 +54,20 @@ Files must end in `.json`.
   "adapter": "acp",
   "enabled": true,
   "kinds": ["code", "agent"],
-  "command": "codex acp",
+  "command": "'/Users/you/Library/Application Support/Crow/executors/codex-acp/node_modules/.bin/codex-acp'",
   "supportsStreaming": true,
   "supportsApproval": true
 }
 ```
 
-`command` starts the ACP agent over stdio. The exact command is executor-specific; `codex acp` is the intended shape for a Codex ACP connector and should be adjusted to the installed agent's documented ACP command.
+`command` starts the ACP agent over stdio through `sh -lc`, so quote paths with spaces. The Codex CLI has no built-in ACP mode; the ACP bridge is the npm package `@agentclientprotocol/codex-acp` (formerly `@zed-industries/codex-acp`). Install it into a Crow-only folder so it does not touch a global Codex install:
+
+```bash
+D="$HOME/Library/Application Support/Crow/executors/codex-acp"
+npm install --prefix "$D" @agentclientprotocol/codex-acp@2.6.0
+```
+
+It bundles its own Codex runtime and reads the user's existing login and settings from `~/.codex`; sessions it runs appear in Codex's history. Pin a version that has been published for a while rather than the newest.
 
 Do not put API keys or model provider base URLs in this manifest. For user-side executors such as Codex, Crow should not ask the user to duplicate credentials. The executor should read its own existing local login, config files, and environment.
 
