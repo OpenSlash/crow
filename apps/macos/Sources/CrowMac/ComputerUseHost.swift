@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import ScreenCaptureKit
 
 struct CrowComputerCommand: Decodable, Sendable {
@@ -152,9 +153,10 @@ final class CrowComputerUseHost {
         case "drag":
             drag(from: try screenPoint(args, "x", "y"), to: try screenPoint(args, "to_x", "to_y"))
         case "type":
-            try refuseSecureField()
-            type(args["text"] as? String ?? "")
+            try refuseSecureInput()
+            try await type(args["text"] as? String ?? "")
         case "key":
+            try refuseSecureInput()
             try pressKeys(args["keys"] as? String ?? "")
         case "scroll":
             let point = try screenPoint(args, "x", "y")
@@ -173,18 +175,21 @@ final class CrowComputerUseHost {
     /// Crow's own synthetic events also reset the idle timer, so only input after
     /// Crow's last action counts as the user's.
     private func waitForUserToPause() async throws {
-        let anyInput = CGEventType(rawValue: ~0)!
         let deadline = Date().addingTimeInterval(Self.userWaitLimit)
         while true {
-            let idle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: anyInput)
-            let lastInput = Date().addingTimeInterval(-idle)
-            let userActive = idle < Self.userIdleSeconds && lastInput > lastPostedAt.addingTimeInterval(0.3)
-            if !userActive { return }
+            if !isUserActive() { return }
             if Date() > deadline {
                 throw ComputerUseError("The user is using the computer, so Crow stopped to avoid interfering.")
             }
             try await Swift.Task.sleep(nanoseconds: 250_000_000)
         }
+    }
+
+    /// True when hardware input arrived recently and after Crow's own last event.
+    private func isUserActive() -> Bool {
+        let idle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!)
+        let lastInput = Date().addingTimeInterval(-idle)
+        return idle < Self.userIdleSeconds && lastInput > lastPostedAt.addingTimeInterval(0.3)
     }
 
     // MARK: Screen
@@ -401,8 +406,15 @@ final class CrowComputerUseHost {
 
     // MARK: Keyboard
 
-    private func refuseSecureField() throws {
+    /// Refuses keyboard input into password fields, and while macOS secure input is on
+    /// (it silently drops synthetic keys, e.g. Terminal's Secure Keyboard Entry).
+    private func refuseSecureInput() throws {
+        if IsSecureEventInputEnabled() {
+            throw ComputerUseError("macOS secure input is on (a password field or Secure Keyboard Entry is active), so typed keys would be dropped. Ask the user to do this step.")
+        }
         let system = AXUIElementCreateSystemWide()
+        // An unresponsive app must not stall Crow's main thread.
+        AXUIElementSetMessagingTimeout(system, 0.3)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let element = focused else { return }
@@ -413,20 +425,31 @@ final class CrowComputerUseHost {
         }
     }
 
-    private func type(_ text: String) {
+    /// Types Unicode text regardless of keyboard layout or input method. Stops between
+    /// chunks if the user starts typing or the task is cancelled.
+    private func type(_ text: String) async throws {
+        var typed = 0
         for (index, line) in text.components(separatedBy: "\n").enumerated() {
-            if index > 0 { tap(key: 36, flags: []) }
+            if index > 0 {
+                tap(key: 36, flags: [])
+                typed += 1
+            }
             let units = Array(line.utf16)
             var start = 0
             while start < units.count {
+                if isUserActive() || Swift.Task.isCancelled {
+                    throw ComputerUseError("Stopped after typing \(typed) of \(text.utf16.count) characters because the user started using the computer.")
+                }
                 let chunk = Array(units[start..<min(start + 20, units.count)])
                 for keyDown in [true, false] {
                     let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: keyDown)
                     event?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
                     event?.post(tap: .cghidEventTap)
                 }
+                lastPostedAt = Date()
                 start += 20
-                usleep(8_000)
+                typed += chunk.count
+                try await Swift.Task.sleep(nanoseconds: 8_000_000)
             }
         }
     }
@@ -442,7 +465,7 @@ final class CrowComputerUseHost {
             case "alt", "option", "opt": flags.insert(.maskAlternate)
             case "fn": flags.insert(.maskSecondaryFn)
             default:
-                guard let code = Self.keyCodes[part] else {
+                guard let code = Self.layoutKeyCode(for: part) ?? Self.keyCodes[part] else {
                     throw ComputerUseError("Unknown key \"\(part)\"")
                 }
                 key = code
@@ -505,6 +528,29 @@ final class CrowComputerUseHost {
         }
         if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { handler($0) ? nil : $0 }) {
             stopMonitors.append(local)
+        }
+    }
+
+    /// The key that types `character` in the current keyboard layout, so shortcuts
+    /// like cmd+a hit the right key on AZERTY or Dvorak too. Named keys return nil.
+    static func layoutKeyCode(for character: String) -> CGKeyCode? {
+        guard character.count == 1,
+              let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let dataRef = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
+        let data = Unmanaged<CFData>.fromOpaque(dataRef).takeUnretainedValue() as Data
+        return data.withUnsafeBytes { raw -> CGKeyCode? in
+            guard let layout = raw.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return nil }
+            for code in 0..<CGKeyCode(128) {
+                var deadKeys: UInt32 = 0
+                var length = 0
+                var chars = [UniChar](repeating: 0, count: 4)
+                let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+                                            OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, chars.count, &length, &chars)
+                if status == noErr, length > 0, String(utf16CodeUnits: chars, count: length).lowercased() == character {
+                    return code
+                }
+            }
+            return nil
         }
     }
 

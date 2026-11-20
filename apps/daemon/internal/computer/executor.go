@@ -28,6 +28,8 @@ When the task is done or cannot be done, reply without calling tools: one or two
 const keepScreenshots = 2
 
 type Executor struct {
+	// busy admits one computer task at a time; two would interleave their actions.
+	busy     chan struct{}
 	enabled  func() bool
 	bridge   *Bridge
 	provider func() (llm.Provider, error)
@@ -39,8 +41,11 @@ func NewExecutor(bridge *Bridge, provider func() (llm.Provider, error), seeOnly 
 	if maxSteps <= 0 {
 		maxSteps = 40
 	}
-	return &Executor{bridge: bridge, provider: provider, seeOnly: seeOnly, maxSteps: maxSteps}
+	return &Executor{busy: make(chan struct{}, 1), bridge: bridge, provider: provider, seeOnly: seeOnly, maxSteps: maxSteps}
 }
+
+// maxTypeLength bounds one type action so a cancelled task stops typing quickly.
+const maxTypeLength = 2000
 
 // WithEnabled makes Run refuse while enabled reports false.
 func (e *Executor) WithEnabled(enabled func() bool) *Executor {
@@ -68,6 +73,17 @@ func (e *Executor) Run(ctx context.Context, req executor.Request, sink executor.
 	if err != nil {
 		return err
 	}
+	select {
+	case e.busy <- struct{}{}:
+	default:
+		_ = sink.ApplyExecutorEvent(ctx, req.TaskID, executor.Event{Type: "executor.waiting", Title: "Waiting", Message: "Another computer task is running.", Status: "running", Subtitle: "Waiting for another task"})
+		select {
+		case e.busy <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	defer func() { <-e.busy }()
 	approvals, _ := sink.(executor.ApprovalSink)
 	if approvals == nil {
 		return errors.New("computer use needs approvals")
@@ -142,6 +158,9 @@ func (e *Executor) runAction(ctx context.Context, call llm.ToolCall, seeOnly boo
 		return fail("unknown action %q", action)
 	}
 	delete(args, "action")
+	if text, _ := args["text"].(string); len([]rune(text)) > maxTypeLength {
+		return fail("text is longer than %d characters; type it in parts", maxTypeLength)
+	}
 	event(executor.Event{Type: "tool.started", Title: label, Message: describe(action, args), Status: "running", Subtitle: label})
 
 	if !readOnly[action] {
@@ -267,7 +286,7 @@ func toolSpec(seeOnly bool) llm.Tool {
 				"to_y":       number("Drag end y."),
 				"button":     map[string]any{"type": "string", "enum": []string{"left", "right", "middle"}},
 				"count":      map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
-				"text":       map[string]any{"type": "string"},
+				"text":       map[string]any{"type": "string", "maxLength": maxTypeLength},
 				"keys":       map[string]any{"type": "string"},
 				"direction":  map[string]any{"type": "string", "enum": []string{"up", "down", "left", "right"}},
 				"amount":     map[string]any{"type": "integer", "minimum": 1, "maximum": 30},

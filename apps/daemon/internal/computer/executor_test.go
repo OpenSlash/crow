@@ -178,3 +178,31 @@ func TestReadOnlyActionsSkipApproval(t *testing.T) {
 		t.Fatalf("zoom result = %q", got)
 	}
 }
+
+func TestOneTaskAtATime(t *testing.T) {
+	b := NewBridge()
+	_, stop := fakeApp(t, b)
+	defer stop()
+	e := NewExecutor(b, func() (llm.Provider, error) { return &scripted{responses: []llm.Response{{Text: "ok"}}}, nil }, nil, 10)
+	e.busy <- struct{}{} // another task holds the slot
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	sink := &fakeSink{}
+	go func() { done <- e.Run(ctx, executor.Request{TaskID: "t2"}, sink) }()
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("err = %v", err)
+	}
+	if len(sink.asked) != 0 || sink.events[0].Type != "executor.waiting" {
+		t.Fatalf("asked = %v events = %v", sink.asked, sink.events)
+	}
+}
+
+func TestTypeLengthLimit(t *testing.T) {
+	long := strings.Repeat("字", maxTypeLength+1)
+	p := &scripted{responses: []llm.Response{call(`{"action":"type","text":"` + long + `"}`), {Text: "ok"}}}
+	actions := run(t, p, &fakeSink{}, false, true)
+	if strings.Join(actions, ",") != "release" || !strings.Contains(p.requests[1].Messages[2].Content, "longer than") {
+		t.Fatalf("actions = %v", actions)
+	}
+}
