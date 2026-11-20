@@ -558,6 +558,11 @@ final class CrowDaemonSupervisor {
     }
 }
 
+/// Top-left origin, so a scroll view's content starts at the top.
+final class CrowFlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 @MainActor
 final class CrowRPCClient {
     private let session: CrowSession
@@ -1510,7 +1515,7 @@ final class CrowWindowController: NSWindowController {
     init(model: CrowAppModel) {
         self.model = model
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -1528,6 +1533,7 @@ final class CrowWindowController: NSWindowController {
         window.center()
         super.init(window: window)
         buildUI()
+        scheduleSettingsSnapshotIfRequested()
         bindModel()
     }
 
@@ -1762,55 +1768,50 @@ final class CrowWindowController: NSWindowController {
         settingsPage.spacing = 14
         settingsPage.alignment = .centerX
 
-        let mainCard = NSStackView()
-        mainCard.orientation = .vertical
-        mainCard.spacing = 0
-        mainCard.alignment = .width
-
         configureModelControls()
-        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "cpu", title: "Model", subtitle: "Local uses your own API key"))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsPopUpRow(symbol: "server.rack", title: "Mode", popUp: agentModePopUp))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsPopUpRow(symbol: "building.2", title: "Provider", popUp: llmProviderPopUp))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsFieldRow(symbol: "link", title: "Base URL", field: llmBaseURLField))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsFieldRow(symbol: "sparkles", title: "Model", field: llmModelField))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsFieldRow(symbol: "key", title: "API key", field: llmAPIKeyField))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsActionsRow(symbol: "checkmark.seal", title: "Connection", buttons: [testModelButton]))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "brain", title: "Memory", subtitle: "Markdown files on this Mac, versioned with Git"))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsToggleRow(symbol: "brain.head.profile", title: "Remember things", button: memoryEnabledButton))
-        mainCard.addArrangedSubview(makeSeparator())
+        let model = settingsCard(
+            settingsSectionHeader(symbol: "cpu", title: "Model", subtitle: "Local uses your own API key"),
+            [
+                settingsPopUpRow(symbol: "server.rack", title: "Mode", popUp: agentModePopUp),
+                settingsPopUpRow(symbol: "building.2", title: "Provider", popUp: llmProviderPopUp),
+                settingsFieldRow(symbol: "link", title: "Base URL", field: llmBaseURLField),
+                settingsFieldRow(symbol: "sparkles", title: "Model", field: llmModelField),
+                settingsFieldRow(symbol: "key", title: "API key", field: llmAPIKeyField),
+                settingsActionsRow(symbol: "checkmark.seal", title: "Connection", buttons: [testModelButton]),
+            ]
+        )
+
         let openMemory = NSButton(title: "Open Folder", target: self, action: #selector(openMemoryFolder))
         openMemory.bezelStyle = .rounded
         let clearMemory = NSButton(title: "Clear…", target: self, action: #selector(clearMemory))
         clearMemory.bezelStyle = .rounded
-        mainCard.addArrangedSubview(settingsActionsRow(symbol: "folder", title: "Files", buttons: [openMemory, clearMemory]))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "cursorarrow.click.2", title: "Computer use", subtitle: "Stop anytime with ⌃⌥⎋"))
-        mainCard.addArrangedSubview(makeSeparator())
+        let memory = settingsCard(
+            settingsSectionHeader(symbol: "brain", title: "Memory", subtitle: "Markdown files on this Mac, versioned with Git"),
+            [
+                settingsToggleRow(symbol: "brain.head.profile", title: "Remember things", button: memoryEnabledButton),
+                settingsActionsRow(symbol: "folder", title: "Files", buttons: [openMemory, clearMemory]),
+            ]
+        )
+
         computerUseEnabledButton.target = self
         computerUseEnabledButton.action = #selector(computerUseToggled)
-        mainCard.addArrangedSubview(settingsToggleRow(symbol: "power", title: "Let Crow use this Mac", button: computerUseEnabledButton))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsToggleRow(symbol: "eye", title: "See only (no clicks or typing)", button: computerSeeOnlyButton))
-        mainCard.addArrangedSubview(makeSeparator())
         for (button, action) in [(screenRecordingButton, #selector(grantScreenRecording)), (accessibilityButton, #selector(grantAccessibility))] {
             button.bezelStyle = .rounded
             button.target = self
             button.action = action
         }
-        mainCard.addArrangedSubview(settingsActionsRow(symbol: "rectangle.dashed.badge.record", title: "Screen Recording", buttons: [screenRecordingButton]))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsActionsRow(symbol: "accessibility", title: "Accessibility", buttons: [accessibilityButton]))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "hand.raised", title: "Approvals", subtitle: "When Crow asks before acting"))
-        mainCard.addArrangedSubview(makeSeparator())
+        let computer = settingsCard(
+            settingsSectionHeader(symbol: "cursorarrow.click.2", title: "Computer use", subtitle: "Off by default · stop anytime with ⌃⌥⎋"),
+            [
+                settingsToggleRow(symbol: "power", title: "Let Crow use this Mac", button: computerUseEnabledButton),
+                settingsToggleRow(symbol: "eye", title: "See only (no clicks or typing)", button: computerSeeOnlyButton),
+                settingsActionsRow(symbol: "rectangle.dashed.badge.record", title: "Screen Recording", buttons: [screenRecordingButton]),
+                settingsActionsRow(symbol: "accessibility", title: "Accessibility", buttons: [accessibilityButton]),
+                settingsNoteRow("Both permissions are granted in System Settings › Privacy & Security. Grant opens the right page; restart Crow after granting Screen Recording."),
+            ]
+        )
+
+        var approvalRows: [NSView] = []
         for scope in CrowApprovalScope.allCases {
             guard let popUp = approvalPopUps[scope] else { continue }
             popUp.removeAllItems()
@@ -1818,33 +1819,65 @@ final class CrowWindowController: NSWindowController {
                 popUp.addItem(withTitle: title)
                 popUp.lastItem?.representedObject = value
             }
-            mainCard.addArrangedSubview(settingsPopUpRow(symbol: scope.symbol, title: scope.title, popUp: popUp))
-            mainCard.addArrangedSubview(makeSeparator())
+            approvalRows.append(settingsPopUpRow(symbol: scope.symbol, title: scope.title, popUp: popUp))
         }
         grantsLabel.textColor = .secondaryLabelColor
         grantsLabel.font = .systemFont(ofSize: 12)
+        grantsLabel.lineBreakMode = .byTruncatingTail
+        grantsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let revokeGrants = NSButton(title: "Revoke All", target: self, action: #selector(revokeApprovalGrants))
         revokeGrants.bezelStyle = .rounded
         let grantsRow = settingsActionsRow(symbol: "clock.badge.checkmark", title: "Active grants", buttons: [revokeGrants])
         if let row = grantsRow as? NSStackView {
             row.insertArrangedSubview(grantsLabel, at: max(0, row.arrangedSubviews.count - 1))
         }
-        mainCard.addArrangedSubview(grantsRow)
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsSectionHeader(symbol: "waveform", title: "Voice", subtitle: "Audio output"))
-        mainCard.addArrangedSubview(makeSeparator())
+        approvalRows.append(grantsRow)
+        let approvals = settingsCard(
+            settingsSectionHeader(symbol: "hand.raised", title: "Approvals", subtitle: "When Crow asks before acting"),
+            approvalRows
+        )
+
         configureTTSVoicePopUp()
-        mainCard.addArrangedSubview(settingsPopUpRow(symbol: "speaker.wave.2", title: "Voice", popUp: ttsVoicePopUp))
-        mainCard.addArrangedSubview(makeSeparator())
         configureIslandAvatarPopUp()
-        mainCard.addArrangedSubview(settingsPopUpRow(symbol: "bird", title: "Island appearance", popUp: islandAvatarPopUp))
-        mainCard.addArrangedSubview(makeSeparator())
         configureHotKeyRecorder()
-        mainCard.addArrangedSubview(settingsButtonRow(symbol: "keyboard", title: "Shortcut", button: islandHotkeyRecorder))
-        mainCard.addArrangedSubview(makeSeparator())
-        mainCard.addArrangedSubview(settingsFieldRow(symbol: "timer", title: "Idle close seconds", field: islandIdleCloseField))
-        mainCard.addArrangedSubview(makeSeparator())
-        settingsPage.addArrangedSubview(makeLargeCard(mainCard, showsBorder: false))
+        let voice = settingsCard(
+            settingsSectionHeader(symbol: "waveform", title: "Voice & island", subtitle: "Audio output and the island"),
+            [
+                settingsPopUpRow(symbol: "speaker.wave.2", title: "Voice", popUp: ttsVoicePopUp),
+                settingsPopUpRow(symbol: "bird", title: "Island appearance", popUp: islandAvatarPopUp),
+                settingsButtonRow(symbol: "keyboard", title: "Shortcut", button: islandHotkeyRecorder),
+                settingsFieldRow(symbol: "timer", title: "Idle close seconds", field: islandIdleCloseField),
+            ]
+        )
+
+        let sections = NSStackView(views: [model, memory, computer, approvals, voice])
+        sections.orientation = .vertical
+        sections.alignment = .centerX
+        sections.spacing = 16
+        sections.translatesAutoresizingMaskIntoConstraints = false
+
+        // The window has a fixed height, so the sections scroll and Save stays below them.
+        let document = CrowFlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(sections)
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.documentView = document
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            sections.topAnchor.constraint(equalTo: document.topAnchor, constant: 4),
+            sections.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -8),
+            sections.centerXAnchor.constraint(equalTo: document.centerXAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            scroll.widthAnchor.constraint(equalToConstant: 528),
+            scroll.heightAnchor.constraint(equalToConstant: 400),
+        ])
+        settingsPage.addArrangedSubview(scroll)
 
         let actions = NSStackView()
         actions.orientation = .horizontal
@@ -2092,6 +2125,34 @@ final class CrowWindowController: NSWindowController {
         return badge
     }
 
+    /// One section as its own card: header, then rows with separators between them.
+    private func settingsCard(_ header: NSView, _ rows: [NSView]) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.alignment = .width
+        stack.addArrangedSubview(header)
+        for row in rows {
+            stack.addArrangedSubview(makeSeparator())
+            stack.addArrangedSubview(row)
+        }
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 4, right: 0)
+        stack.widthAnchor.constraint(equalToConstant: 500).isActive = true
+        return makeLargeCard(stack, showsBorder: true)
+    }
+
+    /// A short explanation under a section's rows.
+    private func settingsNoteRow(_ text: String) -> NSView {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.preferredMaxLayoutWidth = 452
+        let row = NSStackView(views: [label, NSView()])
+        row.alignment = .top
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 10, right: 16)
+        return row
+    }
+
     private func settingsSectionHeader(symbol: String, title: String, subtitle: String) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
@@ -2102,6 +2163,7 @@ final class CrowWindowController: NSWindowController {
 
         let text = NSStackView()
         text.orientation = .vertical
+        text.alignment = .leading
         text.spacing = 2
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -2143,7 +2205,13 @@ final class CrowWindowController: NSWindowController {
         llmBaseURLField.placeholderString = provider == .custom ? "https://…/v1" : "Default"
         llmModelField.placeholderString = provider.defaultModel.isEmpty ? "Required" : provider.defaultModel
         let hasKey = CrowModelKeychain.apiKey(for: provider) != nil
-        llmAPIKeyField.placeholderString = provider == .ollama ? "Not required" : (hasKey ? "Saved in Keychain" : "Required")
+        // The daemon may also have a key from the environment (.env) for the saved provider.
+        let savedProvider = CrowModelProvider(rawValue: model.settings.llmProvider) ?? .openai
+        let hasEnvKey = model.settings.llmApiKeySet && provider == savedProvider
+        llmAPIKeyField.placeholderString = provider == .ollama ? "Not required"
+            : hasKey ? "Saved in Keychain"
+            : hasEnvKey ? "Set from environment (.env)"
+            : "Required"
         for control in [llmProviderPopUp, llmBaseURLField, llmModelField, llmAPIKeyField] as [NSControl] {
             control.isEnabled = isLocal
         }
@@ -2454,6 +2522,32 @@ final class CrowWindowController: NSWindowController {
     @objc private func sendTask() {
         model.commandText = commandField.stringValue
         model.createTask()
+    }
+
+    /// Development aid: with CROW_SETTINGS_SNAPSHOT=<dir>, renders the settings page
+    /// (top, middle, bottom) to PNGs. It draws only Crow's own window: no screen capture.
+    private func scheduleSettingsSnapshotIfRequested() {
+        guard let dir = ProcessInfo.processInfo.environment["CROW_SETTINGS_SNAPSHOT"], !dir.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, let content = self.window?.contentView else { return }
+            self.viewControl.selectedSegment = MainView.settings.rawValue
+            self.switchMainView()
+            let scroll = self.settingsPage.arrangedSubviews.compactMap { $0 as? NSScrollView }.first
+            for (index, fraction) in [0.0, 0.5, 1.0].enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1 + Double(index)) {
+                    if let scroll, let document = scroll.documentView {
+                        let maxY = max(0, document.frame.height - scroll.contentView.bounds.height)
+                        scroll.contentView.scroll(to: NSPoint(x: 0, y: maxY * fraction))
+                        scroll.reflectScrolledClipView(scroll.contentView)
+                    }
+                    content.layoutSubtreeIfNeeded()
+                    guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
+                    content.cacheDisplay(in: content.bounds, to: rep)
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent("settings-\(index).png")
+                    try? rep.representation(using: .png, properties: [:])?.write(to: url)
+                }
+            }
+        }
     }
 
     @objc private func switchMainView() {
