@@ -59,6 +59,9 @@ type server struct {
 	gate     *approval.Gate
 	bridge   *computer.Bridge
 	computer *computer.Executor
+	// conversation is the voice conversation's short-term context; task results
+	// join it so follow-ups can refer to them.
+	conversation *agent.Conversation
 }
 
 func newServer(store *store.Store) *server {
@@ -72,11 +75,12 @@ func newServer(store *store.Store) *server {
 		intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps)).WithEnabled(computerUseEnabled)
 	executors = append([]executor.Executor{computerExecutor}, executors...)
 	return &server{
-		bridge:    bridge,
-		computer:  computerExecutor,
-		gate:      approval.NewGate(store, approvalPolicyFromEnv, approvalGrantTTL),
-		store:     store,
-		startedAt: time.Now(),
+		conversation: agent.NewConversation(agent.DefaultConversationIdle),
+		bridge:       bridge,
+		computer:     computerExecutor,
+		gate:         approval.NewGate(store, approvalPolicyFromEnv, approvalGrantTTL),
+		store:        store,
+		startedAt:    time.Now(),
 		state: &crowv1.RuntimeState{
 			Status:  "idle",
 			Phase:   "idle",
@@ -178,7 +182,8 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 		append([]agent.Tool{agent.DelegateToCodexIf(runtime.hasCodeExecutor), agent.UseComputer(computerUseEnabled)},
 			append(agent.ReminderTools(reminderAdapter{runtime.store}),
 				agent.OpenComputerUseSettings(func() bool { return !computerUseEnabled() }, runtime.openComputerUseSettings))...)...).
-		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) })
+		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) }).
+		WithConversation(runtime.conversation)
 	mux.HandleFunc("/v1/agent/respond", requireSessionToken(token, agentHandler.ServeRespond))
 	mux.HandleFunc("/v1/agent/respond-stream", requireSessionToken(token, agentHandler.ServeRespondStream))
 }
@@ -632,6 +637,7 @@ func (s *server) ApplyExecutorEvent(ctx context.Context, taskID string, event ex
 		return err
 	}
 	s.publishTaskEvent(taskEvent)
+	s.noteTaskOutcome(eventType, message)
 
 	if eventType == "approval.required" {
 		approval := &crowv1.Approval{
@@ -787,6 +793,21 @@ func (s *server) unregisterApprovalWaiter(approvalID string) {
 	s.mu.Lock()
 	delete(s.approvals, approvalID)
 	s.mu.Unlock()
+}
+
+// noteTaskOutcome adds a finished task's result to the conversation context.
+func (s *server) noteTaskOutcome(eventType, message string) {
+	if s.conversation == nil {
+		return
+	}
+	switch eventType {
+	case "task.completed":
+		s.conversation.Add("assistant", "[Task result] "+message)
+	case "task.failed", "executor.failed":
+		s.conversation.Add("assistant", "[Task failed] "+message)
+	case "task.cancelled":
+		s.conversation.Add("assistant", "[Task cancelled by the user]")
+	}
 }
 
 func inferExecutorTaskState(eventType string, title string, message string) (string, string) {

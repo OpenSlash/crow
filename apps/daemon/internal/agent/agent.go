@@ -68,6 +68,7 @@ type Handler struct {
 	maxSteps      int
 	memory        *memory.Store
 	memoryEnabled func() bool
+	conversation  *Conversation
 }
 
 // DefaultMaxSteps caps model requests per turn.
@@ -85,6 +86,13 @@ func NewHandler(provider ProviderFunc, maxSteps int, tools ...Tool) *Handler {
 func (h *Handler) WithMemory(store *memory.Store, enabled func() bool) *Handler {
 	h.memory = store
 	h.memoryEnabled = enabled
+	return h
+}
+
+// WithConversation keeps short-term context across requests that carry no
+// messages of their own.
+func (h *Handler) WithConversation(c *Conversation) *Handler {
+	h.conversation = c
 	return h
 }
 
@@ -116,6 +124,31 @@ func (h *Handler) turn(req RespondRequest) (string, map[string]Tool, []llm.Tool)
 // Respond runs the tool loop: call the model, run requested tools, feed results
 // back, until the model answers without tools, a tool hands off, or the step cap.
 func (h *Handler) Respond(ctx context.Context, req RespondRequest, ev Events) (RespondResult, error) {
+	// Clients that send no history get the daemon's conversation context.
+	if h.conversation == nil || len(req.Messages) > 0 {
+		return h.respond(ctx, req, ev)
+	}
+	for _, m := range h.conversation.History() {
+		req.Messages = append(req.Messages, Message{Role: m.Role, Content: m.Content})
+	}
+	result, err := h.respond(ctx, req, ev)
+	switch {
+	case err == nil:
+		h.conversation.Add("user", req.Input)
+		reply := result.Text
+		if result.NeedExecutor {
+			reply += "\n[Handed off to " + result.ExecutorHint + ": " + result.ExecutorTask + "]"
+		}
+		h.conversation.Add("assistant", reply)
+	case ctx.Err() != nil:
+		// Interrupted, often to rephrase: keep what was asked.
+		h.conversation.Add("user", req.Input)
+		h.conversation.Add("assistant", "[Interrupted by the user before answering]")
+	}
+	return result, err
+}
+
+func (h *Handler) respond(ctx context.Context, req RespondRequest, ev Events) (RespondResult, error) {
 	if req.NeedExecutor {
 		return h.handoff(RespondResult{Provider: "crow-router"}, "", Handoff{Executor: "codex", Task: strings.TrimSpace(req.Input)}, ev)
 	}
