@@ -5256,7 +5256,14 @@ final class CrowIslandView: NSView {
             || didSubmitVoiceCommand
         if hasLiveText {
             let contentRect = NSRect(x: rect.minX + 26, y: rect.minY + 26, width: rect.width - 52, height: 28)
-            drawText(voicePrimaryLine(), in: contentRect, size: 13, weight: .medium, color: NSColor(calibratedWhite: 0.88, alpha: 1))
+            // One line, updated in place: the user's words in grey (live text, then the
+            // final transcript of the whole utterance), then Crow's reply in white.
+            // Text that is still growing keeps its newest words visible.
+            let showsReply = didSubmitVoiceCommand && !caption.text(full: voiceAgentText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let growing = showsReply ? caption.isActive : (isRecording || isTranscribing)
+            drawText(voicePrimaryLine(), in: contentRect, size: 13, weight: .medium,
+                     color: NSColor(calibratedWhite: showsReply ? 0.9 : 0.62, alpha: 1),
+                     lineBreak: growing ? .byTruncatingHead : .byTruncatingTail)
         } else {
             drawPersonaCenter(style: persona, in: NSRect(x: rect.midX - 34, y: rect.minY + 25, width: 68, height: 42))
         }
@@ -5360,7 +5367,7 @@ final class CrowIslandView: NSView {
                 return agentText
             }
             if !voiceTranscript.isEmpty {
-                return "你：\(voiceTranscript)"
+                return voiceTranscript
             }
             return "Crow is working..."
         }
@@ -5936,11 +5943,11 @@ final class CrowIslandView: NSView {
         )
     }
 
-    private func drawText(_ english: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor) {
+    private func drawText(_ english: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor, lineBreak: NSLineBreakMode = .byTruncatingTail) {
         // Status labels are English; L leaves anything without a translation as is.
         let value = L(english)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.lineBreakMode = lineBreak
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: size, weight: weight),
             .foregroundColor: color,
