@@ -25,16 +25,23 @@ type OpenAISpeechResult struct {
 	ContentType string
 }
 
-func (a *API) transcribeWithOpenAI(ctx context.Context, audio []byte, filename string, contentType string, language string) (OpenAITranscriptionResult, error) {
+func (a *API) transcribeWithOpenAI(ctx context.Context, audio []byte, filename string, contentType string, language string, prompt string) (OpenAITranscriptionResult, error) {
 	if strings.TrimSpace(a.cfg.OpenAIAPIKey) == "" {
 		return OpenAITranscriptionResult{}, fmt.Errorf("OpenAI API key is not configured")
 	}
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	_ = writer.WriteField("model", firstNonEmptyString(a.cfg.OpenAISTTModel, "gpt-4o-mini-transcribe"))
+	_ = writer.WriteField("model", firstNonEmptyString(a.cfg.OpenAISTTModel, "gpt-4o-transcribe"))
 	if strings.TrimSpace(language) != "" {
 		_ = writer.WriteField("language", strings.TrimSpace(language))
+	}
+	// The prompt carries vocabulary and style hints; OpenAI reads at most 224 tokens of it.
+	if prompt = strings.TrimSpace(prompt); prompt != "" {
+		if runes := []rune(prompt); len(runes) > 600 {
+			prompt = string(runes[:600])
+		}
+		_ = writer.WriteField("prompt", prompt)
 	}
 	_ = writer.WriteField("response_format", "json")
 

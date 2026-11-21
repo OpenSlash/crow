@@ -27,6 +27,7 @@ import (
 	"github.com/crow/crow/apps/daemon/internal/approval"
 	"github.com/crow/crow/apps/daemon/internal/computer"
 	"github.com/crow/crow/apps/daemon/internal/config"
+	"github.com/crow/crow/apps/daemon/internal/dictation"
 	"github.com/crow/crow/apps/daemon/internal/executor"
 	"github.com/crow/crow/apps/daemon/internal/llm"
 	"github.com/crow/crow/apps/daemon/internal/memory"
@@ -1160,6 +1161,29 @@ func (s *server) StreamAudio(ctx context.Context, stream *connect.BidiStream[cro
 			})
 		}
 	}
+}
+
+// PolishTranscript cleans up a dictation transcript. Without a usable model the
+// transcript comes back unchanged, so dictation still types something.
+func (s *server) PolishTranscript(ctx context.Context, req *connect.Request[crowv1.PolishTranscriptRequest]) (*connect.Response[crowv1.PolishTranscriptResponse], error) {
+	raw := strings.TrimSpace(req.Msg.GetText())
+	unchanged := connect.NewResponse(&crowv1.PolishTranscriptResponse{Text: raw})
+	if raw == "" {
+		return unchanged, nil
+	}
+	provider, err := llmProvider()
+	if err != nil {
+		log.Printf("polish transcript: %v", err)
+		return unchanged, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	text, err := dictation.Polish(ctx, provider, raw, req.Msg.GetApp(), req.Msg.GetVocabulary())
+	if err != nil {
+		log.Printf("polish transcript: %v", err)
+		return unchanged, nil
+	}
+	return connect.NewResponse(&crowv1.PolishTranscriptResponse{Text: text, Polished: true}), nil
 }
 
 func (s *server) CancelVoiceSession(ctx context.Context, req *connect.Request[crowv1.CancelVoiceSessionRequest]) (*connect.Response[crowv1.CancelVoiceSessionResponse], error) {

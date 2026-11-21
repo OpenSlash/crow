@@ -22,7 +22,7 @@ The JSON file uses environment variable keys, for example:
 {
   "CROW_VOICE_PROVIDER": "system",
   "CROW_STT_PROVIDER": "openai",
-  "CROW_OPENAI_STT_MODEL": "gpt-4o-mini-transcribe",
+  "CROW_OPENAI_STT_MODEL": "gpt-4o-transcribe",
   "CROW_TTS_PROVIDER": "openai",
   "CROW_OPENAI_TTS_MODEL": "gpt-4o-mini-tts",
   "CROW_OPENAI_TTS_VOICE": "marin",

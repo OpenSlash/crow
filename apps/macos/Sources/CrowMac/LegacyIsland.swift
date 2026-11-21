@@ -1073,7 +1073,7 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
             return
         }
 
-        let model = (CrowEnvironment.value("CROW_OPENAI_STT_MODEL") ?? "gpt-4o-mini-transcribe")
+        let model = (CrowEnvironment.value("CROW_OPENAI_STT_MODEL") ?? CrowSpeechVocabulary.defaultModel)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let language = Self.transcriptionLanguage()
         let boundary = "CrowBoundary\(UUID().uuidString)"
@@ -1081,11 +1081,13 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
+        let prompt = CrowSpeechVocabulary.transcriptionPrompt(language: language)
         let fields = useCloudBackend
-            ? ["language": language]
+            ? ["language": language, "prompt": prompt]
             : [
-                "model": model.isEmpty ? "gpt-4o-mini-transcribe" : model,
+                "model": model.isEmpty ? CrowSpeechVocabulary.defaultModel : model,
                 "language": language,
+                "prompt": prompt,
                 "response_format": "json"
             ]
         let body = CrowOpenAIHTTP.multipartBody(
@@ -1258,7 +1260,7 @@ final class CrowOpenAIRealtimeSpeechSession: CrowVoiceInputSession, @unchecked S
     private func sendSessionUpdate(localeIdentifier: String, voice: String) {
         let turnDetection = (CrowEnvironment.value("CROW_OPENAI_REALTIME_TURN_DETECTION") ?? "semantic_vad")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let transcriptionModel = (CrowEnvironment.value("CROW_OPENAI_REALTIME_TRANSCRIPTION_MODEL") ?? "gpt-4o-mini-transcribe")
+        let transcriptionModel = (CrowEnvironment.value("CROW_OPENAI_REALTIME_TRANSCRIPTION_MODEL") ?? CrowSpeechVocabulary.defaultModel)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         sendJSON([
@@ -1269,7 +1271,7 @@ final class CrowOpenAIRealtimeSpeechSession: CrowVoiceInputSession, @unchecked S
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": [
-                    "model": transcriptionModel.isEmpty ? "gpt-4o-mini-transcribe" : transcriptionModel,
+                    "model": transcriptionModel.isEmpty ? CrowSpeechVocabulary.defaultModel : transcriptionModel,
                     "language": normalizedRealtimeLanguage(localeIdentifier)
                 ],
                 "turn_detection": [
@@ -2275,6 +2277,30 @@ final class CrowOpenAIStreamingTTSSpeaker: NSObject, URLSessionDataDelegate, @un
     }
 }
 
+/// Words the user says that speech recognition tends to get wrong, from
+/// CROW_STT_VOCABULARY (comma or newline separated), plus Crow's own names.
+enum CrowSpeechVocabulary {
+    static let defaultModel = "gpt-4o-transcribe"
+
+    static var terms: [String] {
+        let custom = (CrowEnvironment.value("CROW_STT_VOCABULARY") ?? "")
+            .components(separatedBy: CharacterSet(charactersIn: ",，、\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return (custom + ["Crow", "Codex", "Claude"]).filter { seen.insert($0).inserted }
+    }
+
+    /// A prompt in the spoken language biases recognition toward these words and
+    /// toward punctuated output.
+    static func transcriptionPrompt(language: String) -> String {
+        let words = terms.joined(separator: language.hasPrefix("zh") ? "、" : ", ")
+        return language.hasPrefix("zh")
+            ? "这是一段带标点的普通话语音，可能夹杂英文词。常用词：\(words)。"
+            : "Dictated speech with punctuation. Common words: \(words)."
+    }
+}
+
 enum CrowStreamingEventPoster {
     static func postLevel(sessionID: String, power: Float) {
         DispatchQueue.main.async {
@@ -2334,104 +2360,137 @@ extension Notification.Name {
 final class CrowHotKeyCenter {
     static let shared = CrowHotKeyCenter()
 
+    /// The island shortcut was pressed.
     var onWake: (() -> Void)?
+    /// The dictation shortcut went down (true) or up (false).
+    var onDictation: ((Bool) -> Void)?
 
-    private var hotKeyRef: EventHotKeyRef?
+    private static let wakeID: UInt32 = 1
+    private static let dictationID: UInt32 = 2
+    private var hotKeyRefs: [EventHotKeyRef] = []
     private var handlerRef: EventHandlerRef?
 
     private init() {}
 
     func register() {
-        guard hotKeyRef == nil else {
+        guard hotKeyRefs.isEmpty else {
             return
         }
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-        let callback: EventHandlerUPP = { _, event, _ in
-            var hotKeyID = EventHotKeyID()
-            let status = GetEventParameter(
-                event,
-                EventParamName(kEventParamDirectObject),
-                EventParamType(typeEventHotKeyID),
-                nil,
-                MemoryLayout<EventHotKeyID>.size,
-                nil,
-                &hotKeyID
-            )
-            if status == noErr, hotKeyID.signature == fourCharCode("CROW"), hotKeyID.id == 1 {
-                Task { @MainActor in
-                    CrowHotKeyCenter.shared.triggerWake()
+        if handlerRef == nil {
+            var eventTypes = [
+                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+            ]
+            let callback: EventHandlerUPP = { _, event, _ in
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr, hotKeyID.signature == fourCharCode("CROW") else {
+                    return noErr
                 }
+                let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
+                let id = hotKeyID.id
+                Task { @MainActor in
+                    CrowHotKeyCenter.shared.handle(id: id, pressed: pressed)
+                }
+                return noErr
             }
-            return noErr
+            InstallEventHandler(GetApplicationEventTarget(), callback, eventTypes.count, &eventTypes, nil, &handlerRef)
         }
 
-        InstallEventHandler(GetApplicationEventTarget(), callback, 1, &eventType, nil, &handlerRef)
+        add(CrowHotKey.parse(CrowEnvironment.value("CROW_ISLAND_HOTKEY"), fallback: "ctrl+option+space"), id: Self.wakeID)
+        let dictation = (CrowEnvironment.value("CROW_DICTATION_HOTKEY") ?? CrowHotKey.defaultDictation)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if dictation.lowercased() != "off" {
+            add(CrowHotKey.parse(dictation, fallback: CrowHotKey.defaultDictation), id: Self.dictationID)
+        }
+    }
 
-        let hotKey = CrowHotKey.fromEnvironment()
-        let hotKeyID = EventHotKeyID(signature: fourCharCode("CROW"), id: 1)
+    private func add(_ hotKey: CrowHotKey, id: UInt32) {
+        var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
             hotKey.keyCode,
             hotKey.modifiers,
-            hotKeyID,
+            EventHotKeyID(signature: fourCharCode("CROW"), id: id),
             GetApplicationEventTarget(),
             0,
-            &hotKeyRef
+            &ref
         )
-        if status != noErr {
-            NSLog("Crow Island failed to register hotkey: \(status)")
+        if status == noErr, let ref {
+            hotKeyRefs.append(ref)
+        } else {
+            NSLog("Crow failed to register hotkey \(id): \(status)")
         }
     }
 
     func reload() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
+        hotKeyRefs.forEach { UnregisterEventHotKey($0) }
+        hotKeyRefs.removeAll()
         register()
     }
 
-    private func triggerWake() {
-        onWake?()
+    private func handle(id: UInt32, pressed: Bool) {
+        switch id {
+        case Self.wakeID where pressed:
+            onWake?()
+        case Self.dictationID:
+            onDictation?(pressed)
+        default:
+            break
+        }
     }
 }
 
 struct CrowHotKey {
+    static let defaultDictation = "ctrl+option+d"
+
     let keyCode: UInt32
     let modifiers: UInt32
 
-    static func fromEnvironment() -> CrowHotKey {
-        let raw = CrowEnvironment.value("CROW_ISLAND_HOTKEY") ?? "ctrl+option+space"
-        let parts = raw
-            .lowercased()
-            .split(separator: "+")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// Parses "ctrl+option+space"-style shortcuts, as HotKeyRecorderButton writes them.
+    static func parse(_ value: String?, fallback: String) -> CrowHotKey {
+        let raw = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let hotKey = strictParse(raw.isEmpty ? fallback : raw) {
+            return hotKey
+        }
+        return strictParse(fallback) ?? CrowHotKey(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey))
+    }
 
+    private static func strictParse(_ raw: String) -> CrowHotKey? {
         var modifiers: UInt32 = 0
-        var keyCode = UInt32(kVK_Space)
-
-        for part in parts {
+        var keyCode: UInt32?
+        for part in raw.lowercased().split(separator: "+").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             switch part {
-            case "cmd", "command":
-                modifiers |= UInt32(cmdKey)
-            case "shift":
-                modifiers |= UInt32(shiftKey)
-            case "ctrl", "control":
-                modifiers |= UInt32(controlKey)
-            case "opt", "option", "alt":
-                modifiers |= UInt32(optionKey)
-            case "space":
-                keyCode = UInt32(kVK_Space)
-            default:
-                continue
+            case "cmd", "command": modifiers |= UInt32(cmdKey)
+            case "shift": modifiers |= UInt32(shiftKey)
+            case "ctrl", "control": modifiers |= UInt32(controlKey)
+            case "opt", "option", "alt": modifiers |= UInt32(optionKey)
+            default: keyCode = keyCodes[part].map(UInt32.init)
             }
         }
-
+        guard let keyCode, modifiers != 0 else { return nil }
         return CrowHotKey(keyCode: keyCode, modifiers: modifiers)
     }
+
+    private static let keyCodes: [String: Int] = [
+        "space": kVK_Space, "return": kVK_Return, "tab": kVK_Tab,
+        "a": kVK_ANSI_A, "b": kVK_ANSI_B, "c": kVK_ANSI_C, "d": kVK_ANSI_D, "e": kVK_ANSI_E,
+        "f": kVK_ANSI_F, "g": kVK_ANSI_G, "h": kVK_ANSI_H, "i": kVK_ANSI_I, "j": kVK_ANSI_J,
+        "k": kVK_ANSI_K, "l": kVK_ANSI_L, "m": kVK_ANSI_M, "n": kVK_ANSI_N, "o": kVK_ANSI_O,
+        "p": kVK_ANSI_P, "q": kVK_ANSI_Q, "r": kVK_ANSI_R, "s": kVK_ANSI_S, "t": kVK_ANSI_T,
+        "u": kVK_ANSI_U, "v": kVK_ANSI_V, "w": kVK_ANSI_W, "x": kVK_ANSI_X, "y": kVK_ANSI_Y,
+        "z": kVK_ANSI_Z, "0": kVK_ANSI_0, "1": kVK_ANSI_1, "2": kVK_ANSI_2, "3": kVK_ANSI_3,
+        "4": kVK_ANSI_4, "5": kVK_ANSI_5, "6": kVK_ANSI_6, "7": kVK_ANSI_7, "8": kVK_ANSI_8,
+        "9": kVK_ANSI_9
+    ]
 }
 
 @MainActor
@@ -2480,6 +2539,9 @@ final class CrowIslandController: NSObject, NSApplicationDelegate, AVSpeechSynth
         speechSynthesizer.delegate = self
         CrowHotKeyCenter.shared.onWake = { [weak islandView] in
             islandView?.wakeFromShortcut()
+        }
+        CrowHotKeyCenter.shared.onDictation = { pressed in
+            CrowDictation.shared.hotKey(pressed: pressed)
         }
         CrowHotKeyCenter.shared.register()
         voiceInputObserver = NotificationCenter.default.addObserver(

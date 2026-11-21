@@ -193,6 +193,10 @@ struct RuntimeSettings: Codable, Equatable {
     var islandAvatarStyle: String = ""
     /// App-only: "", "en" or "zh"; kept in runtime-settings.json, not sent to the daemon.
     var uiLanguage: String = ""
+    /// App-only, like uiLanguage: the dictation shortcut ("off" disables it) and
+    /// words speech recognition should prefer.
+    var dictationHotkey: String = ""
+    var sttVocabulary: String = ""
     var agentMode: String = ""
     var llmProvider: String = ""
     var llmBaseUrl: String = ""
@@ -302,12 +306,18 @@ struct RuntimeSettings: Codable, Equatable {
             "CROW_ISLAND_IDLE_CLOSE_SECONDS": islandIdleCloseSeconds,
             "CROW_ISLAND_AVATAR_STYLE": islandAvatarStyle,
             "CROW_UI_LANGUAGE": uiLanguage,
+            "CROW_DICTATION_HOTKEY": dictationHotkey,
+            "CROW_STT_VOCABULARY": sttVocabulary,
             "CROW_AGENT_MODE": agentMode,
             "CROW_LLM_PROVIDER": llmProvider,
             "CROW_LLM_BASE_URL": llmBaseUrl,
             "CROW_LLM_MODEL": llmModel
         ].filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
+}
+
+struct PolishedTranscript: Decodable {
+    let text: String?
 }
 
 struct ApprovalGrant: Decodable {
@@ -707,6 +717,15 @@ final class CrowRPCClient {
         let _: CrowEmptyResponse = try await unary("/crow.v1.ReminderService/AckReminder", body: ["id": id])
     }
 
+    func polishTranscript(_ text: String, app: String) async throws -> String {
+        let response: PolishedTranscript = try await unary("/crow.v1.VoiceService/PolishTranscript", body: [
+            "text": text,
+            "app": app,
+            "vocabulary": CrowSpeechVocabulary.terms
+        ])
+        return response.text ?? text
+    }
+
     func listGrants() async throws -> ApprovalGrantList {
         try await unary("/crow.v1.ApprovalService/ListGrants", body: [:])
     }
@@ -942,6 +961,8 @@ final class CrowAppModel: ObservableObject {
             settings = try await client.getSettings()
             settings.islandAvatarStyle = CrowEnvironment.value("CROW_ISLAND_AVATAR_STYLE") ?? settings.islandAvatarStyle
             settings.uiLanguage = CrowEnvironment.value("CROW_UI_LANGUAGE") ?? ""
+            settings.dictationHotkey = CrowEnvironment.value("CROW_DICTATION_HOTKEY") ?? ""
+            settings.sttVocabulary = CrowEnvironment.value("CROW_STT_VOCABULARY") ?? ""
             grants = (try? await client.listGrants().grants) ?? grants
             await loadExecutors()
             settingsStatus = L("Settings loaded")
@@ -983,6 +1004,8 @@ final class CrowAppModel: ObservableObject {
                 settings = try await client.saveSettings(nextSettings, apiKey: apiKey)
                 settings.islandAvatarStyle = nextSettings.islandAvatarStyle
                 settings.uiLanguage = nextSettings.uiLanguage
+                settings.dictationHotkey = nextSettings.dictationHotkey
+                settings.sttVocabulary = nextSettings.sttVocabulary
                 try persistRuntimeSettings(settings)
                 CrowHotKeyCenter.shared.reload()
                 settingsStatus = L("Settings saved")
@@ -1017,6 +1040,14 @@ final class CrowAppModel: ObservableObject {
         computerUse.onStop = { [weak self] in self?.cancelActiveTask() }
         computerUse.onOpenSettings = { [weak self] in self?.openComputerUseSettingsHandler?() }
         computerUse.start(client: client)
+        CrowDictation.shared.polish = { text, app in
+            do {
+                return try await client.polishTranscript(text, app: app)
+            } catch {
+                NSLog("Crow dictation polish failed: \(error.localizedDescription)")
+                return text
+            }
+        }
         await refresh()
     }
 
@@ -1413,6 +1444,7 @@ final class HotKeyRecorderButton: NSButton {
             .replacingOccurrences(of: "shift", with: "⇧")
             .replacingOccurrences(of: "+", with: " ")
             .replacingOccurrences(of: "space", with: "Space")
+            .split(separator: " ").map { $0.count == 1 ? $0.uppercased() : String($0) }.joined(separator: " ")
     }
 
     private static func hotKeyString(from event: NSEvent) -> String? {
@@ -1487,6 +1519,8 @@ final class CrowWindowController: NSWindowController {
     private let islandHotkeyField = NSTextField(string: "")
     private let islandHotkeyRecorder = HotKeyRecorderButton(title: "Record shortcut", target: nil, action: nil)
     private let islandIdleCloseField = NSTextField(string: "")
+    private let dictationHotkeyRecorder = HotKeyRecorderButton(title: "Record shortcut", target: nil, action: nil)
+    private let sttVocabularyField = NSTextField(string: "")
     private let streamTTSButton = NSButton(checkboxWithTitle: L("Stream TTS output"), target: nil, action: nil)
     private let settingsStatusLabel = NSTextField(labelWithString: "")
     private let agentModePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -1870,9 +1904,17 @@ final class CrowWindowController: NSWindowController {
                 settingsPopUpRow(symbol: "globe", title: L("Language"), popUp: uiLanguagePopUp),
             ]
         )
+        let dictation = settingsCard(
+            settingsSectionHeader(symbol: "mic", title: L("Dictation"), subtitle: L("Speak into any app; Crow tidies up the text")),
+            [
+                settingsButtonRow(symbol: "keyboard", title: L("Shortcut"), button: dictationHotkeyRecorder),
+                settingsFieldRow(symbol: "character.book.closed", title: L("Vocabulary"), field: sttVocabularyField),
+                settingsNoteRow(L("Hold the shortcut while speaking, or tap it to start and tap again to finish. The text is typed where your cursor is. Vocabulary: names and terms recognition should get right, separated by commas; it also applies to the island.")),
+            ]
+        )
 
         computerUseCard = computer
-        let sections = NSStackView(views: [model, memory, computer, approvals, voice])
+        let sections = NSStackView(views: [model, memory, computer, approvals, voice, dictation])
         sections.orientation = .vertical
         sections.alignment = .centerX
         sections.spacing = 16
@@ -2337,6 +2379,10 @@ final class CrowWindowController: NSWindowController {
         islandHotkeyRecorder.onChange = { [weak self] value in
             self?.islandHotkeyField.stringValue = value
         }
+        dictationHotkeyRecorder.bezelStyle = .rounded
+        dictationHotkeyRecorder.controlSize = .regular
+        dictationHotkeyRecorder.alignment = .center
+        sttVocabularyField.placeholderString = "Crow, Codex, …"
     }
 
     private func configureExecutorButtons() {
@@ -2623,6 +2669,8 @@ final class CrowWindowController: NSWindowController {
         settings.islandScreen = islandScreenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandHotkey = islandHotkeyRecorder.hotKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandIdleCloseSeconds = islandIdleCloseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.dictationHotkey = dictationHotkeyRecorder.hotKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.sttVocabulary = sttVocabularyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandAvatarStyle = selectedIslandAvatarStyle()
         settings.agentMode = selectedPopUpValue(agentModePopUp, fallback: CrowAgentMode.local.rawValue)
         settings.llmProvider = selectedPopUpValue(llmProviderPopUp, fallback: CrowModelProvider.openai.rawValue)
@@ -2973,6 +3021,10 @@ final class CrowWindowController: NSWindowController {
             : settings.islandHotkey
         if !islandIdleCloseField.currentEditorExists {
             islandIdleCloseField.stringValue = settings.islandIdleCloseSeconds
+        }
+        dictationHotkeyRecorder.hotKeyValue = settings.dictationHotkey.isEmpty ? CrowHotKey.defaultDictation : settings.dictationHotkey
+        if !sttVocabularyField.currentEditorExists {
+            sttVocabularyField.stringValue = settings.sttVocabulary
         }
         streamTTSButton.state = settings.ttsStreaming ? .on : .off
         memoryEnabledButton.state = settings.memoryEnabled ? .on : .off

@@ -43,7 +43,7 @@ func (a *API) createRealtimeClientSecretWithOpenAI(ctx context.Context, req Real
 		"audio": map[string]interface{}{
 			"input": map[string]interface{}{
 				"transcription": map[string]interface{}{
-					"model": firstNonEmptyString(a.cfg.OpenAIRealtimeTranscriptionModel, a.cfg.OpenAISTTModel, "gpt-4o-mini-transcribe"),
+					"model": firstNonEmptyString(a.cfg.OpenAIRealtimeTranscriptionModel, a.cfg.OpenAISTTModel, "gpt-4o-transcribe"),
 				},
 				"turn_detection": map[string]interface{}{
 					"type": firstNonEmptyString(a.cfg.OpenAIRealtimeTurnDetection, "semantic_vad"),

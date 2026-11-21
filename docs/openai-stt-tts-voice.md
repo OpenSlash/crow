@@ -21,7 +21,7 @@ Notch wake
 
 ```env
 CROW_STT_PROVIDER='openai'
-CROW_OPENAI_STT_MODEL='gpt-4o-mini-transcribe'
+CROW_OPENAI_STT_MODEL='gpt-4o-transcribe'
 CROW_STT_FALLBACK='system'
 
 CROW_TTS_PROVIDER='openai'

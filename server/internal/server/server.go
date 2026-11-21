@@ -219,7 +219,8 @@ func (a *API) voiceTranscriptions(ctx context.Context, c *app.RequestContext) {
 	}
 
 	language := strings.TrimSpace(string(c.FormValue("language")))
-	result, err := a.transcribeWithOpenAI(ctx, audio, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), language)
+	prompt := strings.TrimSpace(string(c.FormValue("prompt")))
+	result, err := a.transcribeWithOpenAI(ctx, audio, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), language, prompt)
 	if err != nil {
 		log.Printf("voice transcription failed user_id=%s device_id=%s error=%v", auth.UserID, auth.DeviceID, err)
 		writeError(c, consts.StatusBadGateway, "stt_provider_error", err.Error())

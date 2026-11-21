@@ -22,6 +22,8 @@ service VoiceService {
   rpc StartVoiceSession(StartVoiceSessionRequest) returns (VoiceSession);
   rpc StreamAudio(stream AudioChunk) returns (stream VoiceEvent);
   rpc CancelVoiceSession(CancelVoiceSessionRequest) returns (CancelVoiceSessionResponse);
+  // Turns a dictation transcript into the text the speaker meant to type.
+  rpc PolishTranscript(PolishTranscriptRequest) returns (PolishTranscriptResponse);
 }
 
 // Computer use: the app watches for commands, runs them on this Mac and
@@ -197,6 +199,20 @@ message TaskEvent {
   string title = 4;
   string message = 5;
   string created_at = 6;
+}
+
+message PolishTranscriptRequest {
+  string text = 1;
+  // Name of the app the text goes into, e.g. "Mail"; may be empty.
+  string app = 2;
+  // Words the speaker uses that recognition tends to get wrong.
+  repeated string vocabulary = 3;
+}
+
+message PolishTranscriptResponse {
+  string text = 1;
+  // False when the model was unavailable and text is the transcript unchanged.
+  bool polished = 2;
 }
 
 message StartVoiceSessionRequest {

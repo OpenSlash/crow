@@ -41,6 +41,10 @@ To use Crow Cloud instead, run `./scripts/run-crow-server.sh` and set the mode t
 
 Requirements: macOS, Go 1.24+, Swift toolchain.
 
+## Dictation
+
+Hold `⌃⌥D` and speak in any app, or tap it to start and tap again to finish. Crow transcribes the recording, has your model tidy it up (fillers removed, self-corrections applied, misheard words fixed, punctuation added, nothing translated) and types the result at the cursor. Without Accessibility permission the text is left on the clipboard. Change the shortcut, or set `off`, under Settings › Dictation, and add names and terms recognition should get right under Vocabulary; the vocabulary also applies to the island.
+
 ## Computer Use over MCP
 
 Other agents can see and operate this Mac through Crow. Turn on computer use in Crow Settings, then register the MCP server:

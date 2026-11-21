@@ -70,6 +70,9 @@ const (
 	// VoiceServiceCancelVoiceSessionProcedure is the fully-qualified name of the VoiceService's
 	// CancelVoiceSession RPC.
 	VoiceServiceCancelVoiceSessionProcedure = "/crow.v1.VoiceService/CancelVoiceSession"
+	// VoiceServicePolishTranscriptProcedure is the fully-qualified name of the VoiceService's
+	// PolishTranscript RPC.
+	VoiceServicePolishTranscriptProcedure = "/crow.v1.VoiceService/PolishTranscript"
 	// ComputerServiceWatchCommandsProcedure is the fully-qualified name of the ComputerService's
 	// WatchCommands RPC.
 	ComputerServiceWatchCommandsProcedure = "/crow.v1.ComputerService/WatchCommands"
@@ -384,6 +387,8 @@ type VoiceServiceClient interface {
 	StartVoiceSession(context.Context, *connect.Request[v1.StartVoiceSessionRequest]) (*connect.Response[v1.VoiceSession], error)
 	StreamAudio(context.Context) *connect.BidiStreamForClient[v1.AudioChunk, v1.VoiceEvent]
 	CancelVoiceSession(context.Context, *connect.Request[v1.CancelVoiceSessionRequest]) (*connect.Response[v1.CancelVoiceSessionResponse], error)
+	// Turns a dictation transcript into the text the speaker meant to type.
+	PolishTranscript(context.Context, *connect.Request[v1.PolishTranscriptRequest]) (*connect.Response[v1.PolishTranscriptResponse], error)
 }
 
 // NewVoiceServiceClient constructs a client for the crow.v1.VoiceService service. By default, it
@@ -415,6 +420,12 @@ func NewVoiceServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(voiceServiceMethods.ByName("CancelVoiceSession")),
 			connect.WithClientOptions(opts...),
 		),
+		polishTranscript: connect.NewClient[v1.PolishTranscriptRequest, v1.PolishTranscriptResponse](
+			httpClient,
+			baseURL+VoiceServicePolishTranscriptProcedure,
+			connect.WithSchema(voiceServiceMethods.ByName("PolishTranscript")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -423,6 +434,7 @@ type voiceServiceClient struct {
 	startVoiceSession  *connect.Client[v1.StartVoiceSessionRequest, v1.VoiceSession]
 	streamAudio        *connect.Client[v1.AudioChunk, v1.VoiceEvent]
 	cancelVoiceSession *connect.Client[v1.CancelVoiceSessionRequest, v1.CancelVoiceSessionResponse]
+	polishTranscript   *connect.Client[v1.PolishTranscriptRequest, v1.PolishTranscriptResponse]
 }
 
 // StartVoiceSession calls crow.v1.VoiceService.StartVoiceSession.
@@ -440,11 +452,18 @@ func (c *voiceServiceClient) CancelVoiceSession(ctx context.Context, req *connec
 	return c.cancelVoiceSession.CallUnary(ctx, req)
 }
 
+// PolishTranscript calls crow.v1.VoiceService.PolishTranscript.
+func (c *voiceServiceClient) PolishTranscript(ctx context.Context, req *connect.Request[v1.PolishTranscriptRequest]) (*connect.Response[v1.PolishTranscriptResponse], error) {
+	return c.polishTranscript.CallUnary(ctx, req)
+}
+
 // VoiceServiceHandler is an implementation of the crow.v1.VoiceService service.
 type VoiceServiceHandler interface {
 	StartVoiceSession(context.Context, *connect.Request[v1.StartVoiceSessionRequest]) (*connect.Response[v1.VoiceSession], error)
 	StreamAudio(context.Context, *connect.BidiStream[v1.AudioChunk, v1.VoiceEvent]) error
 	CancelVoiceSession(context.Context, *connect.Request[v1.CancelVoiceSessionRequest]) (*connect.Response[v1.CancelVoiceSessionResponse], error)
+	// Turns a dictation transcript into the text the speaker meant to type.
+	PolishTranscript(context.Context, *connect.Request[v1.PolishTranscriptRequest]) (*connect.Response[v1.PolishTranscriptResponse], error)
 }
 
 // NewVoiceServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -472,6 +491,12 @@ func NewVoiceServiceHandler(svc VoiceServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(voiceServiceMethods.ByName("CancelVoiceSession")),
 		connect.WithHandlerOptions(opts...),
 	)
+	voiceServicePolishTranscriptHandler := connect.NewUnaryHandler(
+		VoiceServicePolishTranscriptProcedure,
+		svc.PolishTranscript,
+		connect.WithSchema(voiceServiceMethods.ByName("PolishTranscript")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/crow.v1.VoiceService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case VoiceServiceStartVoiceSessionProcedure:
@@ -480,6 +505,8 @@ func NewVoiceServiceHandler(svc VoiceServiceHandler, opts ...connect.HandlerOpti
 			voiceServiceStreamAudioHandler.ServeHTTP(w, r)
 		case VoiceServiceCancelVoiceSessionProcedure:
 			voiceServiceCancelVoiceSessionHandler.ServeHTTP(w, r)
+		case VoiceServicePolishTranscriptProcedure:
+			voiceServicePolishTranscriptHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -499,6 +526,10 @@ func (UnimplementedVoiceServiceHandler) StreamAudio(context.Context, *connect.Bi
 
 func (UnimplementedVoiceServiceHandler) CancelVoiceSession(context.Context, *connect.Request[v1.CancelVoiceSessionRequest]) (*connect.Response[v1.CancelVoiceSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.VoiceService.CancelVoiceSession is not implemented"))
+}
+
+func (UnimplementedVoiceServiceHandler) PolishTranscript(context.Context, *connect.Request[v1.PolishTranscriptRequest]) (*connect.Response[v1.PolishTranscriptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("crow.v1.VoiceService.PolishTranscript is not implemented"))
 }
 
 // ComputerServiceClient is a client for the crow.v1.ComputerService service.

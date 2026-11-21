@@ -139,6 +139,21 @@ private let chineseStrings: [String: String] = [
     "Reload": "重新加载",
     "Save Settings": "保存设置",
 
+    // Settings: Dictation
+    "Dictation": "听写",
+    "Speak into any app; Crow tidies up the text": "在任意 App 里说话，Crow 整理好文字再输入",
+    "Vocabulary": "常用词",
+    "Hold the shortcut while speaking, or tap it to start and tap again to finish. The text is typed where your cursor is. Vocabulary: names and terms recognition should get right, separated by commas; it also applies to the island.": "按住快捷键说话，松开结束；或轻按一下开始、再按一下结束。文字会输入到光标所在位置。常用词：希望准确识别的人名和术语，用逗号分隔，灵动岛对话也会用到。",
+
+    // Dictation
+    "Dictating…": "正在听写…",
+    "Dictating… tap the shortcut again to finish": "正在听写…再按一次快捷键结束",
+    "Tidying up…": "正在整理…",
+    "Didn't catch that.": "没听清。",
+    "Copied. Press ⌘V to paste.": "已复制，按 ⌘V 粘贴。",
+    "Speech recognition is unavailable.": "语音识别不可用。",
+    "Allow microphone access for Crow, then try again.": "请先允许 Crow 使用麦克风，再试一次。",
+
     // Executors page
     "Executors are installed as local connector manifests. Crow does not bundle Codex, Claude Code, OpenClaw, or MCP tools.": "执行器以本地连接器配置的形式安装。Crow 不内置 Codex、Claude Code、OpenClaw 或 MCP 工具。",
     "Executors not loaded": "执行器未加载",

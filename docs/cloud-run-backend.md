@@ -173,7 +173,7 @@ Start the backend locally:
 cd server
 CROW_OPENAI_API_KEY='sk-...' \
 CROW_OPENAI_AGENT_MODEL='gpt-4.1-mini' \
-CROW_OPENAI_STT_MODEL='gpt-4o-mini-transcribe' \
+CROW_OPENAI_STT_MODEL='gpt-4o-transcribe' \
 CROW_OPENAI_TTS_MODEL='gpt-4o-mini-tts' \
 CROW_OPENAI_TTS_VOICE='marin' \
 go run ./cmd/crow-cloud
