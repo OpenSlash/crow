@@ -3135,6 +3135,7 @@ final class CrowIslandView: NSView {
     private var didSubmitVoiceCommand = false
     private var voiceTranscript = ""
     private var voiceAgentText = ""
+    private var caption = CrowSpeechCaption()
     private var voiceAgentPhase = ""
     private var voiceHint = L("Tap to stop. Auto-creates after silence.")
     private var inputLevel: CGFloat = 0
@@ -4130,6 +4131,9 @@ final class CrowIslandView: NSView {
                 self.isExpanded = true
                 self.voiceAgentPhase = "responding"
                 self.voiceHint = L("Crow is responding")
+                if self.voiceAgentText.isEmpty && Self.voiceTTSStreamingEnabled() {
+                    self.caption.start()
+                }
                 self.voiceAgentText.append(delta)
                 self.enqueueVoiceAgentSpeech(delta: delta, flush: false)
                 self.needsDisplay = true
@@ -4239,6 +4243,13 @@ final class CrowIslandView: NSView {
     }
 
     private func resetVoiceAgentSpeechOutput(stopPlayback: Bool) {
+        if caption.isActive {
+            // Interrupted: keep what was said; finished: show the whole reply.
+            if stopPlayback {
+                voiceAgentText = caption.text(full: voiceAgentText)
+            }
+            caption.stop()
+        }
         voiceSpeechBuffer = ""
         voiceSpeechQueue.removeAll()
         isVoiceSpeechInputFinished = false
@@ -4337,6 +4348,7 @@ final class CrowIslandView: NSView {
         guard voiceResponseSpeaker == nil, voiceStreamingSpeaker == nil, !voiceResponseSynthesizer.isSpeaking else {
             return
         }
+        caption.finishSegment()
         guard !voiceSpeechQueue.isEmpty else {
             if isVoiceSpeechInputFinished {
                 finishVoiceAgentSpeechOutput()
@@ -4345,6 +4357,7 @@ final class CrowIslandView: NSView {
         }
 
         let text = voiceSpeechQueue.removeFirst()
+        caption.beginSegment(text)
         CrowMacLog("voice tts start segment chars=\(text.count) remaining=\(voiceSpeechQueue.count) audioStreaming=\(Self.voiceAudioStreamingEnabled())")
         if Self.voiceAudioStreamingEnabled() {
             startStreamingVoiceSpeechSegment(text)
@@ -4364,6 +4377,7 @@ final class CrowIslandView: NSView {
             text,
             onStarted: { [weak self, weak speaker] in
                 guard let self, self.voiceStreamingSpeaker === speaker else { return }
+                self.caption.segmentStarted()
                 self.isSpeaking = true
                 self.voiceAgentPhase = "speaking"
                 self.voiceHint = L("Crow is speaking")
@@ -4394,6 +4408,7 @@ final class CrowIslandView: NSView {
             text,
             onStarted: { [weak self, weak speaker] in
                 guard let self, self.voiceResponseSpeaker === speaker else { return }
+                self.caption.segmentStarted()
                 self.isSpeaking = true
                 self.voiceAgentPhase = "speaking"
                 self.voiceHint = L("Crow is speaking")
@@ -4424,6 +4439,7 @@ final class CrowIslandView: NSView {
         voiceHint = L("Crow is speaking")
         needsDisplay = true
         voiceResponseSynthesizer.speak(utterance)
+        caption.segmentStarted()
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0.9, Double(text.count) * 0.14)) { [weak self] in
             guard let self else { return }
             self.startNextVoiceSpeechSegmentIfNeeded()
@@ -4446,6 +4462,8 @@ final class CrowIslandView: NSView {
     }
 
     private func playVoiceAgentResponse(_ text: String) {
+        caption.start()
+        caption.beginSegment(text)
         if Self.voiceAudioStreamingEnabled() {
             voiceStreamingSpeaker?.stop()
             let speaker = CrowOpenAIStreamingTTSSpeaker(useCloudBackend: true)
@@ -4458,6 +4476,7 @@ final class CrowIslandView: NSView {
                 text,
                 onStarted: { [weak self, weak speaker] in
                     guard let self, self.voiceStreamingSpeaker === speaker else { return }
+                    self.caption.segmentStarted()
                     self.isSpeaking = true
                     self.voiceAgentPhase = "speaking"
                     self.voiceHint = L("Crow is speaking")
@@ -4466,6 +4485,7 @@ final class CrowIslandView: NSView {
                 onFinished: { [weak self, weak speaker] in
                     guard let self, self.voiceStreamingSpeaker === speaker else { return }
                     self.voiceStreamingSpeaker = nil
+                    self.caption.stop()
                     self.isSpeaking = false
                     self.voiceAgentPhase = "completed"
                     self.voiceHint = L("Listening again soon")
@@ -4496,6 +4516,7 @@ final class CrowIslandView: NSView {
             text,
             onStarted: { [weak self, weak speaker] in
                 guard let self, self.voiceResponseSpeaker === speaker else { return }
+                self.caption.segmentStarted()
                 self.isSpeaking = true
                 self.voiceAgentPhase = "speaking"
                 self.voiceHint = L("Crow is speaking")
@@ -4504,6 +4525,7 @@ final class CrowIslandView: NSView {
             onFinished: { [weak self, weak speaker] in
                 guard let self, self.voiceResponseSpeaker === speaker else { return }
                 self.voiceResponseSpeaker = nil
+                self.caption.stop()
                 self.isSpeaking = false
                 self.voiceAgentPhase = "completed"
                 self.voiceHint = L("Listening again soon")
@@ -4520,6 +4542,7 @@ final class CrowIslandView: NSView {
     }
 
     private func playVoiceAgentSystemFallback(_ text: String) {
+        caption.stop() // no playback progress to follow
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
         utterance.pitchMultiplier = 1.0
@@ -5283,7 +5306,7 @@ final class CrowIslandView: NSView {
     }
 
     private func voicePrimaryLine() -> String {
-        let agentText = voiceAgentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentText = caption.text(full: voiceAgentText).trimmingCharacters(in: .whitespacesAndNewlines)
         if didSubmitVoiceCommand {
             if !agentText.isEmpty {
                 return agentText
@@ -5312,7 +5335,7 @@ final class CrowIslandView: NSView {
     }
 
     private func voiceInlineText() -> String {
-        let agentText = voiceAgentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentText = caption.text(full: voiceAgentText).trimmingCharacters(in: .whitespacesAndNewlines)
         if didSubmitVoiceCommand {
             if !agentText.isEmpty {
                 return agentText
