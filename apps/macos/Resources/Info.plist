@@ -6,6 +6,8 @@
     <string>Crow</string>
     <key>CFBundleDisplayName</key>
     <string>Crow</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>ai.crow.mac</string>
     <key>CFBundleVersion</key>

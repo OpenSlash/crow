@@ -2133,30 +2133,12 @@ final class CrowWindowController: NSWindowController {
     }
 
     private func makeCrowIcon() -> NSView {
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.cornerRadius = 10
-        box.layer?.cornerCurve = .continuous
-        box.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
-        box.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.18).cgColor
-        box.layer?.borderWidth = 0.5
-        box.widthAnchor.constraint(equalToConstant: 42).isActive = true
-        box.heightAnchor.constraint(equalToConstant: 42).isActive = true
-
-        let imageView = NSImageView()
-        imageView.image = NSImage(systemSymbolName: "bird.fill", accessibilityDescription: "Crow")
-            ?? NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Crow")
-        imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 25, weight: .semibold)
-        imageView.contentTintColor = NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.16, alpha: 1)
+        let imageView = NSImageView(image: CrowBrand.appIcon)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.centerXAnchor.constraint(equalTo: box.centerXAnchor),
-            imageView.centerYAnchor.constraint(equalTo: box.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 28),
-            imageView.heightAnchor.constraint(equalToConstant: 28)
-        ])
-        return box
+        imageView.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        imageView.heightAnchor.constraint(equalToConstant: 52).isActive = true
+        return imageView
     }
 
     private func makeBadgeIcon(symbol: String, tint: NSColor) -> NSView {
@@ -3294,7 +3276,11 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "◈ Crow"
+        if let glyph = CrowBrand.menuBarGlyph {
+            item.button?.image = glyph
+        } else {
+            item.button?.title = "Crow"
+        }
         item.button?.toolTip = "Crow"
 
         let menu = NSMenu()

@@ -5543,6 +5543,14 @@ final class CrowIslandView: NSView {
         )
 
         let markColor = NSColor.white.withAlphaComponent(visualState == .idle ? 0.74 : 0.9)
+        if let glyph = CrowBrand.islandGlyph(alpha: visualState == .idle ? 0.78 : 0.95) {
+            // The brand silhouette; the hand-drawn crow below is the fallback outside the bundle.
+            glyph.draw(in: NSRect(x: rect.midX - size / 2, y: rect.midY - size / 2, width: size, height: size))
+            statusDotColor(for: visualState).setFill()
+            let dotSize = max(2.0, size * 0.13)
+            NSBezierPath(ovalIn: NSRect(x: rect.maxX - dotSize * 0.8, y: rect.minY, width: dotSize, height: dotSize)).fill()
+            return
+        }
         markColor.setFill()
 
         // Facing-left perched crow: sharp beak, raised head, folded wing, long tail.

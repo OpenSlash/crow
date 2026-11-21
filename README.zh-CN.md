@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/crow-icon.png" width="128" alt="Crow app icon"></p>
+
 # Crow
 
 [English](README.md) | 简体中文

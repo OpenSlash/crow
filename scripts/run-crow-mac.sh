@@ -14,6 +14,8 @@ rm -rf "$BUNDLE_DIR"
 mkdir -p "$MACOS_DIR"
 cp ".build/debug/CrowMac" "$MACOS_DIR/CrowMac"
 cp "Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+mkdir -p "$CONTENTS_DIR/Resources"
+cp Resources/AppIcon.icns Resources/MenuBarGlyph.png Resources/MenuBarGlyph@2x.png Resources/IslandGlyph.png "$CONTENTS_DIR/Resources/"
 chmod +x "$MACOS_DIR/CrowMac"
 
 # macOS ties Accessibility and Screen Recording grants to the app's signature. An
