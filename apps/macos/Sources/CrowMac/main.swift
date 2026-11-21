@@ -1978,7 +1978,7 @@ final class CrowWindowController: NSWindowController {
             settingsSectionHeader(symbol: "waveform", title: L("Voice & island"), subtitle: L("Audio output and the island")),
             [
                 settingsPopUpRow(symbol: "speaker.wave.2", title: L("Voice"), popUp: ttsVoicePopUp),
-                settingsPopUpRow(symbol: "bird", title: L("Island appearance"), popUp: islandAvatarPopUp),
+                settingsPopUpRow(symbol: "bird", title: L("Island persona"), popUp: islandAvatarPopUp),
                 settingsButtonRow(symbol: "keyboard", title: L("Shortcut"), button: islandHotkeyRecorder),
                 settingsFieldRow(symbol: "timer", title: L("Idle close seconds"), field: islandIdleCloseField),
                 settingsPopUpRow(symbol: "globe", title: L("Language"), popUp: uiLanguagePopUp),
@@ -3404,6 +3404,7 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         CrowMacLog("show window")
         showWindow()
         CrowMicProbe.runIfRequested()
+        CrowPersonaSheet.runIfRequested()
         CrowMacLog("model start")
         model.start()
         CrowMacLog("cloud activation skipped at startup")

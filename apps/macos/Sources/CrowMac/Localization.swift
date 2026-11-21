@@ -138,7 +138,7 @@ private let chineseStrings: [String: String] = [
     "Voice & island": "语音与灵动岛",
     "Audio output and the island": "语音输出和灵动岛",
     "Voice": "音色",
-    "Island appearance": "灵动岛外观",
+    "Island persona": "灵动岛形象",
     "Shortcut": "快捷键",
     "Idle close seconds": "空闲自动关闭（秒）",
     "Language": "界面语言",
