@@ -882,6 +882,12 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
     private var didStopInput = false
     private let audioQueue = DispatchQueue(label: "dev.crow.openai-stt.audio")
     private var pcm16Data = Data()
+    /// On-device recognition runs alongside for live text. When it ran without
+    /// trouble and heard no words, the recording is silence or noise: it is not
+    /// uploaded, since the cloud model then tends to return its prompt.
+    private var partialRecognitionRan = false
+    private var partialRecognitionHeardWords = false
+    private var partialRecognitionFailed = false
     private let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: 16_000,
@@ -905,6 +911,9 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         didStopInput = false
         audioQueue.sync {
             pcm16Data = Data()
+            partialRecognitionRan = false
+            partialRecognitionHeardWords = false
+            partialRecognitionFailed = false
         }
         startPartialRecognition(localeIdentifier: localeIdentifier)
 
@@ -950,6 +959,11 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
 
         audioQueue.async { [weak self] in
             guard let self else { return }
+            if self.partialRecognitionRan, !self.partialRecognitionHeardWords, !self.partialRecognitionFailed {
+                CrowMacLog("voice upload skipped: on-device recognition heard no words")
+                CrowStreamingEventPoster.postTranscript(sessionID: self.id, text: "", isFinal: true)
+                return
+            }
             let wav = Self.wavData(fromPCM16: self.pcm16Data, sampleRate: 16_000, channels: 1)
             DispatchQueue.main.async {
                 self.upload(wavData: wav)
@@ -979,10 +993,12 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         request.shouldReportPartialResults = true
         partialRecognitionRequest = request
         let sessionID = id
-        partialRecognitionTask = recognizer.recognitionTask(with: request) { result, error in
+        audioQueue.async { self.partialRecognitionRan = true }
+        partialRecognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             if let result {
                 let text = result.bestTranscription.formattedString
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if let self { self.audioQueue.async { self.partialRecognitionHeardWords = true } }
                     // Cloud STT owns the final transcript. System speech only drives live preview text.
                     CrowStreamingEventPoster.postTranscript(sessionID: sessionID, text: text, isFinal: false)
                 }
@@ -990,6 +1006,11 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
             if let error,
                !error.localizedDescription.lowercased().contains("cancel") {
                 NSLog("Crow cloud STT partial recognition ended: \(error.localizedDescription)")
+                // 1110 is "no speech detected", which agrees with silence; anything else
+                // means on-device recognition cannot vouch for the recording.
+                if (error as NSError).code != 1110 {
+                    if let self { self.audioQueue.async { self.partialRecognitionFailed = true } }
+                }
             }
         }
     }
@@ -1112,7 +1133,11 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
                 CrowStreamingEventPoster.postError(sessionID: self.id, message: message)
                 return
             }
-            CrowStreamingEventPoster.postTranscript(sessionID: self.id, text: text, isFinal: true)
+            let cleaned = CrowSpeechVocabulary.removingPromptEcho(text)
+            if cleaned != text {
+                CrowMacLog("voice transcript dropped prompt echo chars=\(text.count) kept=\(cleaned.count)")
+            }
+            CrowStreamingEventPoster.postTranscript(sessionID: self.id, text: cleaned, isFinal: true)
         }
         uploadTask = task
         task.resume()
@@ -2283,6 +2308,29 @@ enum CrowSpeechVocabulary {
         return language.hasPrefix("zh")
             ? "这是一段带标点的普通话语音，可能夹杂英文词。常用词：\(words)。"
             : "Dictated speech with punctuation. Common words: \(words)."
+    }
+
+    /// On silence or noise, transcription models may return the prompt itself.
+    /// Drops sentences that come from the prompt rather than from speech.
+    static func removingPromptEcho(_ text: String) -> String {
+        let markers = ["带标点的普通话", "可能夹杂英文词", "常用词", "dictated speech with punctuation", "common words:"]
+        var kept: [String] = []
+        var sentence = ""
+        func flush() {
+            let lower = sentence.lowercased()
+            if !markers.contains(where: { lower.contains($0) }) {
+                kept.append(sentence)
+            }
+            sentence = ""
+        }
+        for character in text {
+            sentence.append(character)
+            if "。！？!?.\n".contains(character) {
+                flush()
+            }
+        }
+        flush()
+        return kept.joined().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
