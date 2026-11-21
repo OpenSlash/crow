@@ -790,7 +790,7 @@ extension CrowVoiceInputSession {
 final class CrowSystemSpeechSession: CrowVoiceInputSession {
     let id = UUID().uuidString
 
-    private var audioEngine: AVAudioEngine?
+    private var mic: CrowMicSubscription?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
 
@@ -803,7 +803,6 @@ final class CrowSystemSpeechSession: CrowVoiceInputSession {
             ])
         }
 
-        let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
 
@@ -820,11 +819,9 @@ final class CrowSystemSpeechSession: CrowVoiceInputSession {
         }
 
         do {
-            _ = try CrowMicPipeline.start(engine) { pipeline in
-                pipeline.installTap(on: engine) { buffer in
-                    request.append(buffer)
-                    CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: Self.averagePower(from: buffer))
-                }
+            mic = try CrowMicSubscription { buffer in
+                request.append(buffer)
+                CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: Self.averagePower(from: buffer))
             }
         } catch {
             recognitionTask?.cancel()
@@ -832,25 +829,22 @@ final class CrowSystemSpeechSession: CrowVoiceInputSession {
             throw error
         }
 
-        audioEngine = engine
         recognitionRequest = request
     }
 
     func stopInput() {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
+        mic?.cancel()
         recognitionRequest?.endAudio()
     }
 
     func stop(cancel: Bool) {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
+        mic?.cancel()
         if cancel {
             recognitionTask?.cancel()
         } else {
             recognitionRequest?.endAudio()
         }
-        audioEngine = nil
+        mic = nil
         recognitionRequest = nil
         recognitionTask = nil
     }
@@ -880,7 +874,7 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
     let keepsSessionAliveAfterInputStop = true
 
     private let useCloudBackend: Bool
-    private var audioEngine: AVAudioEngine?
+    private var mic: CrowMicSubscription?
     private var audioConverter: AVAudioConverter?
     private var partialRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var partialRecognitionTask: SFSpeechRecognitionTask?
@@ -908,7 +902,6 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
             ])
         }
 
-        let engine = AVAudioEngine()
         didStopInput = false
         audioQueue.sync {
             pcm16Data = Data()
@@ -920,32 +913,30 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         // recording sent for transcription; live preview keeps the full signal.
         let gate = CrowNearFieldGate()
         do {
-            _ = try CrowMicPipeline.start(engine) { [weak self] pipeline in
+            mic = try CrowMicSubscription(prepare: { [weak self] format in
                 guard let self else { return }
-                guard let converter = AVAudioConverter(from: pipeline.format, to: self.outputFormat) else {
+                guard let converter = AVAudioConverter(from: format, to: self.outputFormat) else {
                     throw NSError(domain: "CrowOpenAITranscriptionSession", code: 2, userInfo: [
                         NSLocalizedDescriptionKey: "Could not create audio converter for OpenAI transcription"
                     ])
                 }
                 self.audioConverter = converter
-                pipeline.installTap(on: engine) { [weak self] buffer in
-                    guard let self else { return }
-                    let power = CrowSystemSpeechSession.averagePower(from: buffer)
-                    CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: power)
-                    self.partialRecognitionRequest?.append(buffer)
-                    let isSpeaker = gate.process(power: power)
-                    let gain: Float = isSpeaker || gate.speakerLevel == nil ? 1 : 0.03
-                    guard let data = self.convertToPCM16(buffer, gain: gain) else { return }
-                    self.audioQueue.async {
-                        self.pcm16Data.append(data)
-                    }
+            }) { [weak self] buffer in
+                guard let self else { return }
+                let power = CrowSystemSpeechSession.averagePower(from: buffer)
+                CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: power)
+                self.partialRecognitionRequest?.append(buffer)
+                let isSpeaker = gate.process(power: power)
+                let gain: Float = isSpeaker || gate.speakerLevel == nil ? 1 : 0.03
+                guard let data = self.convertToPCM16(buffer, gain: gain) else { return }
+                self.audioQueue.async {
+                    self.pcm16Data.append(data)
                 }
             }
         } catch {
             stopPartialRecognition(cancel: true)
             throw error
         }
-        audioEngine = engine
     }
 
     func stopInput() {
@@ -953,9 +944,8 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
             return
         }
         didStopInput = true
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
+        mic?.cancel()
+        mic = nil
         stopPartialRecognition(cancel: false)
 
         audioQueue.async { [weak self] in
@@ -968,9 +958,8 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
     }
 
     func stop(cancel: Bool) {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
+        mic?.cancel()
+        mic = nil
         audioConverter = nil
         stopPartialRecognition(cancel: cancel)
         if cancel {
@@ -3152,6 +3141,8 @@ final class CrowIslandView: NSView {
     private var silentSince: Date?
     /// Tells the main speaker from background sound; reset for every capture.
     private var nearFieldGate = CrowNearFieldGate()
+    private var conversationMicMonitor: UUID?
+    private var bargeInDetector: CrowBargeInDetector?
     /// When the main speaker was last heard (transcript updates do not count).
     private var lastNearSpeechAt: Date?
     private var lastSpeechActivityAt: Date?
@@ -3575,6 +3566,50 @@ final class CrowIslandView: NSView {
             || !voiceSpeechQueue.isEmpty
     }
 
+    // MARK: Conversation microphone
+
+    /// Keeps the microphone running for the whole conversation: the next turn
+    /// starts with the words spoken just before it, and the user can talk over Crow.
+    private func holdConversationMic() {
+        guard conversationMicMonitor == nil else { return }
+        do {
+            try CrowMicHub.shared.acquire()
+        } catch {
+            CrowMacLog("conversation mic unavailable: \(error.localizedDescription)")
+            return
+        }
+        conversationMicMonitor = CrowMicHub.shared.subscribe { [weak self] buffer in
+            let power = CrowSystemSpeechSession.averagePower(from: buffer)
+            DispatchQueue.main.async { self?.checkBargeIn(power: power) }
+        }
+    }
+
+    private func releaseConversationMic() {
+        guard let monitor = conversationMicMonitor else { return }
+        conversationMicMonitor = nil
+        bargeInDetector = nil
+        CrowMicHub.shared.unsubscribe(monitor)
+        CrowMicHub.shared.release()
+    }
+
+    /// Interrupts Crow when the user starts talking while it thinks or speaks.
+    private func checkBargeIn(power: Float) {
+        guard CrowBargeInDetector.isEnabled, isVoiceAgentBusy, !isRecording, !isTranscribing, !isShowingApproval else {
+            bargeInDetector = nil
+            return
+        }
+        let detector = bargeInDetector ?? CrowBargeInDetector()
+        bargeInDetector = detector
+        guard detector.process(power: power) else { return }
+        bargeInDetector = nil
+        CrowMacLog("voice barge-in phase=\(voiceAgentPhase)")
+        interruptVoiceAgent()
+        isVoiceConversationActive = true
+        // Keep the words that interrupted Crow: they began before detection.
+        CrowMicHub.shared.requestPreroll(0.9)
+        beginVoiceCapture()
+    }
+
     /// Stops the in-flight turn (pending tool steps are skipped) and any speech.
     private func interruptVoiceAgent() {
         CrowMacLog("voice agent interrupted phase=\(voiceAgentPhase)")
@@ -3626,6 +3661,7 @@ final class CrowIslandView: NSView {
         guard !isRecording && !isTranscribing else {
             return
         }
+        holdConversationMic()
         cancelAutoClose()
         cancelContinueListening()
         cancelNoSpeechClose()
@@ -3846,6 +3882,7 @@ final class CrowIslandView: NSView {
             return
         }
         CrowMacLog("voice panel close reason=\(reason) force=\(force) phase=\(voiceAgentPhase) didSubmit=\(didSubmitVoiceCommand)")
+        releaseConversationMic()
         cancelAutoClose()
         cancelContinueListening()
         cancelNoSpeechClose()
@@ -4911,7 +4948,8 @@ final class CrowIslandView: NSView {
     static func voiceConversationContinueDelay() -> TimeInterval {
         guard let raw = CrowEnvironment.value("CROW_ISLAND_VOICE_CONTINUE_DELAY_SECONDS"),
               let value = TimeInterval(raw) else {
-            return 0.75
+            // The microphone stays on with pre-roll, so listening can resume quickly.
+            return 0.4
         }
         return max(0.2, value)
     }
