@@ -3282,6 +3282,7 @@ final class CrowAppDelegate: NSObject, NSApplicationDelegate {
         islandController?.applicationDidFinishLaunching(notification)
         CrowMacLog("show window")
         showWindow()
+        CrowMicProbe.runIfRequested()
         CrowMacLog("model start")
         model.start()
         CrowMacLog("cloud activation skipped at startup")

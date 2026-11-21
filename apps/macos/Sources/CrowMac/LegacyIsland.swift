@@ -696,7 +696,7 @@ enum CrowCloudDevice {
     }
 }
 
-private final class CrowRNNoiseDenoiser {
+final class CrowRNNoiseDenoiser {
     private let processor: OpaquePointer
     private let frameSize: Int
     private var pendingInput: [Float] = []
@@ -807,29 +807,7 @@ final class CrowSystemSpeechSession: CrowVoiceInputSession {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
 
-        let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
-        inputNode.removeTap(onBus: 0)
         let sessionID = id
-        let rnnoiseEnabled = (CrowEnvironment.value("CROW_RNNOISE_ENABLED") ?? "true").lowercased() != "false"
-        let denoiser = rnnoiseEnabled && CrowRNNoiseDenoiser.isSupported(format: format)
-            ? CrowRNNoiseDenoiser()
-            : nil
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            let speechBuffer: AVAudioPCMBuffer
-            if let denoiser {
-                guard let denoisedBuffer = denoiser.process(buffer) else {
-                    return
-                }
-                speechBuffer = denoisedBuffer
-            } else {
-                speechBuffer = buffer
-            }
-            request.append(speechBuffer)
-            let power = Self.averagePower(from: speechBuffer)
-            CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: power)
-        }
-
         recognitionTask = recognizer.recognitionTask(with: request) { result, error in
             if let result {
                 let text = result.bestTranscription.formattedString
@@ -841,8 +819,18 @@ final class CrowSystemSpeechSession: CrowVoiceInputSession {
             }
         }
 
-        engine.prepare()
-        try engine.start()
+        do {
+            _ = try CrowMicPipeline.start(engine) { pipeline in
+                pipeline.installTap(on: engine) { buffer in
+                    request.append(buffer)
+                    CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: Self.averagePower(from: buffer))
+                }
+            }
+        } catch {
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            throw error
+        }
 
         audioEngine = engine
         recognitionRequest = request
@@ -921,34 +909,42 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         }
 
         let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            throw NSError(domain: "CrowOpenAITranscriptionSession", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "Could not create audio converter for OpenAI transcription"
-            ])
-        }
-        audioConverter = converter
         didStopInput = false
         audioQueue.sync {
             pcm16Data = Data()
         }
         startPartialRecognition(localeIdentifier: localeIdentifier)
 
-        inputNode.removeTap(onBus: 0)
         let sessionID = id
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: CrowSystemSpeechSession.averagePower(from: buffer))
-            self.partialRecognitionRequest?.append(buffer)
-            guard let data = self.convertToPCM16(buffer) else { return }
-            self.audioQueue.async {
-                self.pcm16Data.append(data)
+        // Background speech well below the main speaker is turned down in the
+        // recording sent for transcription; live preview keeps the full signal.
+        let gate = CrowNearFieldGate()
+        do {
+            _ = try CrowMicPipeline.start(engine) { [weak self] pipeline in
+                guard let self else { return }
+                guard let converter = AVAudioConverter(from: pipeline.format, to: self.outputFormat) else {
+                    throw NSError(domain: "CrowOpenAITranscriptionSession", code: 2, userInfo: [
+                        NSLocalizedDescriptionKey: "Could not create audio converter for OpenAI transcription"
+                    ])
+                }
+                self.audioConverter = converter
+                pipeline.installTap(on: engine) { [weak self] buffer in
+                    guard let self else { return }
+                    let power = CrowSystemSpeechSession.averagePower(from: buffer)
+                    CrowStreamingEventPoster.postLevel(sessionID: sessionID, power: power)
+                    self.partialRecognitionRequest?.append(buffer)
+                    let isSpeaker = gate.process(power: power)
+                    let gain: Float = isSpeaker || gate.speakerLevel == nil ? 1 : 0.03
+                    guard let data = self.convertToPCM16(buffer, gain: gain) else { return }
+                    self.audioQueue.async {
+                        self.pcm16Data.append(data)
+                    }
+                }
             }
+        } catch {
+            stopPartialRecognition(cancel: true)
+            throw error
         }
-
-        engine.prepare()
-        try engine.start()
         audioEngine = engine
     }
 
@@ -1019,7 +1015,7 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         partialRecognitionTask = nil
     }
 
-    private func convertToPCM16(_ buffer: AVAudioPCMBuffer) -> Data? {
+    private func convertToPCM16(_ buffer: AVAudioPCMBuffer, gain: Float = 1) -> Data? {
         guard let converter = audioConverter,
               let converted = AVAudioPCMBuffer(
                 pcmFormat: outputFormat,
@@ -1049,7 +1045,7 @@ final class CrowOpenAITranscriptionSession: CrowVoiceInputSession, @unchecked Se
         let sampleCount = Int(converted.frameLength)
         var data = Data(capacity: sampleCount * MemoryLayout<Int16>.size)
         for index in 0..<sampleCount {
-            let clipped = max(-1, min(1, samples[index]))
+            let clipped = max(-1, min(1, samples[index] * gain))
             var value = Int16(clipped * Float(Int16.max)).littleEndian
             withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
         }
@@ -3154,8 +3150,10 @@ final class CrowIslandView: NSView {
     private var voiceHint = L("Tap to stop. Auto-creates after silence.")
     private var inputLevel: CGFloat = 0
     private var silentSince: Date?
-    private var noiseFloorPower: Float = -58
-    private var speechPeakPower: Float = -58
+    /// Tells the main speaker from background sound; reset for every capture.
+    private var nearFieldGate = CrowNearFieldGate()
+    /// When the main speaker was last heard (transcript updates do not count).
+    private var lastNearSpeechAt: Date?
     private var lastSpeechActivityAt: Date?
     private var lastTranscriptUpdateAt: Date?
     private var didHearSpeechInCurrentCapture = false
@@ -3696,8 +3694,8 @@ final class CrowIslandView: NSView {
             isTranscribing = false
             captureStartedAt = Date()
             silentSince = nil
-            noiseFloorPower = -58
-            speechPeakPower = -58
+            nearFieldGate = CrowNearFieldGate()
+            lastNearSpeechAt = nil
             lastSpeechActivityAt = nil
             lastTranscriptUpdateAt = nil
             inputLevel = 0
@@ -3737,8 +3735,8 @@ final class CrowIslandView: NSView {
             isTranscribing = false
             captureStartedAt = Date()
             silentSince = nil
-            noiseFloorPower = -58
-            speechPeakPower = -58
+            nearFieldGate = CrowNearFieldGate()
+            lastNearSpeechAt = nil
             lastSpeechActivityAt = nil
             lastTranscriptUpdateAt = nil
             inputLevel = 0
@@ -3768,8 +3766,8 @@ final class CrowIslandView: NSView {
             isTranscribing = false
             captureStartedAt = Date()
             silentSince = nil
-            noiseFloorPower = -58
-            speechPeakPower = -58
+            nearFieldGate = CrowNearFieldGate()
+            lastNearSpeechAt = nil
             lastSpeechActivityAt = nil
             lastTranscriptUpdateAt = nil
             inputLevel = 0
@@ -3878,8 +3876,8 @@ final class CrowIslandView: NSView {
         voiceHint = L("Tap to stop. Auto-creates after silence.")
         inputLevel = 0
         silentSince = nil
-        noiseFloorPower = -58
-        speechPeakPower = -58
+        nearFieldGate = CrowNearFieldGate()
+        lastNearSpeechAt = nil
         lastSpeechActivityAt = nil
         lastTranscriptUpdateAt = nil
         didHearSpeechInCurrentCapture = false
@@ -4793,28 +4791,39 @@ final class CrowIslandView: NSView {
 
         inputLevel = normalizedAudioLevel(power)
 
-        let elapsed = captureStartedAt.map { Date().timeIntervalSince($0) } ?? 0
-        updateNoiseModel(power: power, elapsed: elapsed)
+        let now = Date()
+        let elapsed = captureStartedAt.map { now.timeIntervalSince($0) } ?? 0
+        let isSpeech = nearFieldGate.process(power: power, now: now)
+        if isSpeech {
+            lastSpeechActivityAt = now
+            lastNearSpeechAt = now
+            didHearSpeechInCurrentCapture = true
+        }
+        // Continuous background speech or noise must not keep the microphone open forever.
+        if elapsed >= Self.voiceCaptureMaxSeconds() {
+            CrowMacLog("voice capture reached the maximum length")
+            finishVoiceCapture()
+            return
+        }
 
         let hasTranscript = !voiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // Wait longer when the words so far trail off ("然后", "and", a comma).
+        let unfinished = Self.soundsUnfinished(voiceTranscript)
         let minimumDuration: TimeInterval = hasTranscript ? 1.0 : 2.2
-        let silenceDuration: TimeInterval = hasTranscript ? 0.95 : 1.7
-        let speechGate = max(noiseFloorPower + 9, -50)
-        let releaseGate = max(noiseFloorPower + 4, min(speechPeakPower - 18, -43))
-        let transcriptIdle = lastTranscriptUpdateAt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
-        let speechIdle = lastSpeechActivityAt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
-        let isLikelySpeech = power > speechGate
+        let pause: TimeInterval = (hasTranscript ? 0.95 : 1.7) * (unfinished ? 1.8 : 1)
+        let transcriptIdle = lastTranscriptUpdateAt.map { now.timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+        let quietFor = lastNearSpeechAt.map { now.timeIntervalSince($0) } ?? elapsed
 
-            if isLikelySpeech {
-            lastSpeechActivityAt = Date()
-            didHearSpeechInCurrentCapture = true
-            speechPeakPower = max(speechPeakPower, power)
+        if elapsed > minimumDuration, hasTranscript, transcriptIdle > 1.35 + (unfinished ? 1.0 : 0) {
+            // Nothing new was recognized for a while, whatever the meter says.
+            markPotentialSilence(duration: pause + 0.25)
+        } else if isSpeech {
             silentSince = nil
-        } else if elapsed > minimumDuration, hasTranscript, transcriptIdle > 0.8, power < releaseGate {
-            markPotentialSilence(duration: silenceDuration)
-        } else if elapsed > minimumDuration, hasTranscript, transcriptIdle > 1.35 {
-            markPotentialSilence(duration: silenceDuration + 0.25)
-        } else if elapsed > 2.2, speechPeakPower > speechGate, speechIdle > 0.95, power < releaseGate {
+        } else if elapsed > minimumDuration, hasTranscript, transcriptIdle > 0.8 || quietFor > pause + 0.6 {
+            // The main speaker went quiet. Background speech may still change the
+            // transcript, so a long quiet stretch ends the capture regardless.
+            markPotentialSilence(duration: pause)
+        } else if elapsed > 2.2, lastNearSpeechAt != nil, quietFor > 0.95 {
             markPotentialSilence(duration: 1.05)
         } else {
             silentSince = nil
@@ -4822,14 +4831,28 @@ final class CrowIslandView: NSView {
         needsDisplay = true
     }
 
-    private func updateNoiseModel(power: Float, elapsed: TimeInterval) {
-        let hasTranscript = !voiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let likelyBackground = !hasTranscript && (elapsed < 0.9 || power < noiseFloorPower + 5)
-        if likelyBackground {
-            noiseFloorPower = (noiseFloorPower * 0.88) + (power * 0.12)
+    static func voiceCaptureMaxSeconds() -> TimeInterval {
+        let raw = CrowEnvironment.value("CROW_VOICE_MAX_SECONDS") ?? ""
+        return TimeInterval(raw.trimmingCharacters(in: .whitespacesAndNewlines)).map { max(5, $0) } ?? 60
+    }
+
+    private static let unfinishedEndings = [
+        "然后", "还有", "而且", "但是", "不过", "就是", "那个", "所以", "因为", "如果", "比如", "或者", "和", "跟", "把",
+        "and", "but", "so", "or", "because", "the", "to", "with", "of", "um", "uh"
+    ]
+
+    static func soundsUnfinished(_ transcript: String) -> Bool {
+        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty else { return false }
+        if let last = text.last, "，,、：:".contains(last) {
+            return true
         }
-        if power > speechPeakPower {
-            speechPeakPower = power
+        return unfinishedEndings.contains { ending in
+            guard text.hasSuffix(ending) else { return false }
+            // An English word must stand alone: "band" does not end in "and".
+            guard ending.first?.isASCII == true else { return true }
+            let rest = text.dropLast(ending.count)
+            return rest.last.map { !$0.isLetter } ?? true
         }
     }
 
