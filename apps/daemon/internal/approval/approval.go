@@ -1,5 +1,7 @@
 // Package approval decides whether an action needs the user's approval, based
-// on a per-scope policy and the grants the user has already given.
+// on one approval level, optional per-scope overrides, and the grants the user
+// has already given. Scopes name kinds of action, not tools, so a new executor
+// adds no setting of its own.
 package approval
 
 import (
@@ -11,13 +13,72 @@ import (
 type Scope string
 
 const (
-	ScopeComputer  Scope = "computer"
-	ScopeTerminal  Scope = "terminal"
-	ScopeCodex     Scope = "codex"
+	ScopeComputer Scope = "computer"
+	ScopeTerminal Scope = "terminal"
+	// ScopeExecutor covers handing work to an executor (Codex, Claude Code, ...)
+	// and executor actions that are neither commands nor file changes.
+	ScopeExecutor  Scope = "executor"
 	ScopeFileWrite Scope = "file_write"
 )
 
-var Scopes = []Scope{ScopeComputer, ScopeTerminal, ScopeCodex, ScopeFileWrite}
+var Scopes = []Scope{ScopeComputer, ScopeTerminal, ScopeExecutor, ScopeFileWrite}
+
+// NormalizeScope maps a requested scope to a known one; "codex" is the old
+// name of the executor scope.
+func NormalizeScope(value string) Scope {
+	switch scope := Scope(strings.TrimSpace(strings.ToLower(value))); scope {
+	case ScopeComputer, ScopeTerminal, ScopeFileWrite:
+		return scope
+	default:
+		return ScopeExecutor
+	}
+}
+
+// Level is the single approval setting most users change.
+type Level string
+
+const (
+	// Cautious asks before every action.
+	Cautious Level = "cautious"
+	// Balanced asks once per task; terminal commands are asked every time.
+	Balanced Level = "balanced"
+	// Relaxed asks once, then allows the scope for the grant TTL.
+	Relaxed Level = "relaxed"
+)
+
+func ParseLevel(value string) Level {
+	switch level := Level(strings.TrimSpace(strings.ToLower(value))); level {
+	case Cautious, Relaxed:
+		return level
+	default:
+		return Balanced
+	}
+}
+
+// Policy is the policy a level applies to a scope.
+func (l Level) Policy(scope Scope) Policy {
+	switch l {
+	case Cautious:
+		return EveryTurn
+	case Relaxed:
+		return Once
+	default:
+		return DefaultPolicy(scope)
+	}
+}
+
+// Auto is the override value that means "follow the level".
+const Auto = "auto"
+
+// ResolvePolicy applies a per-scope override when one is set, else the level.
+func ResolvePolicy(level Level, scope Scope, override string) Policy {
+	switch value := strings.TrimSpace(strings.ToLower(override)); Policy(value) {
+	case EveryTurn, BeforeActing, Once, Never:
+		return ParsePolicy(scope, value)
+	default:
+		return level.Policy(scope)
+	}
+}
 
 type Policy string
 

@@ -672,7 +672,7 @@ func (s *server) ApplyExecutorEvent(ctx context.Context, taskID string, event ex
 }
 
 func (s *server) RequestApproval(ctx context.Context, taskID string, request executor.ApprovalRequest) (bool, error) {
-	scope := approval.Scope(firstNonEmpty(request.Scope, string(approval.ScopeCodex)))
+	scope := approval.NormalizeScope(request.Scope)
 	if allowed, policy := s.gate.Allowed(taskID, scope); allowed {
 		_ = s.ApplyExecutorEvent(ctx, taskID, executor.Event{
 			Type:     "approval.auto",
@@ -693,7 +693,8 @@ func (s *server) RequestApproval(ctx context.Context, taskID string, request exe
 }
 
 func approvalPolicyFromEnv(scope approval.Scope) approval.Policy {
-	return approval.ParsePolicy(scope, os.Getenv("CROW_APPROVAL_"+strings.ToUpper(string(scope))))
+	level := approval.ParseLevel(os.Getenv("CROW_APPROVAL_LEVEL"))
+	return approval.ResolvePolicy(level, scope, os.Getenv("CROW_APPROVAL_"+strings.ToUpper(string(scope))))
 }
 
 func approvalGrantTTL() time.Duration {
@@ -1059,7 +1060,8 @@ func settingsFromEnv() *crowv1.Settings {
 		MemoryEnabled:          boolEnvDefault("CROW_MEMORY_ENABLED", true),
 		ApprovalComputer:       firstNonEmptyEnv("CROW_APPROVAL_COMPUTER"),
 		ApprovalTerminal:       firstNonEmptyEnv("CROW_APPROVAL_TERMINAL"),
-		ApprovalCodex:          firstNonEmptyEnv("CROW_APPROVAL_CODEX"),
+		ApprovalExecutor:       firstNonEmptyEnv("CROW_APPROVAL_EXECUTOR", "CROW_APPROVAL_CODEX"),
+		ApprovalLevel:          firstNonEmptyEnv("CROW_APPROVAL_LEVEL"),
 		ApprovalFileWrite:      firstNonEmptyEnv("CROW_APPROVAL_FILE_WRITE"),
 		ComputerSeeOnly:        boolEnvDefault("CROW_COMPUTER_SEE_ONLY", false),
 		ComputerUseEnabled:     computerUseEnabled(),
@@ -1089,7 +1091,9 @@ func applySettingsToEnv(settings *crowv1.Settings) {
 	_ = os.Setenv("CROW_MEMORY_ENABLED", boolString(settings.GetMemoryEnabled()))
 	setEnvIfPresent("CROW_APPROVAL_COMPUTER", settings.GetApprovalComputer())
 	setEnvIfPresent("CROW_APPROVAL_TERMINAL", settings.GetApprovalTerminal())
-	setEnvIfPresent("CROW_APPROVAL_CODEX", settings.GetApprovalCodex())
+	setEnvIfPresent("CROW_APPROVAL_EXECUTOR", settings.GetApprovalExecutor())
+	_ = os.Unsetenv("CROW_APPROVAL_CODEX") // read once above as the executor override
+	setEnvIfPresent("CROW_APPROVAL_LEVEL", settings.GetApprovalLevel())
 	setEnvIfPresent("CROW_APPROVAL_FILE_WRITE", settings.GetApprovalFileWrite())
 	_ = os.Setenv("CROW_COMPUTER_SEE_ONLY", boolString(settings.GetComputerSeeOnly()))
 	_ = os.Setenv("CROW_COMPUTER_USE_ENABLED", boolString(settings.GetComputerUseEnabled()))
@@ -1190,10 +1194,15 @@ func applyRuntimeSettingValues(settings *crowv1.Settings, values map[string]stri
 	if value, ok := values["CROW_COMPUTER_SEE_ONLY"]; ok {
 		settings.ComputerSeeOnly = parseBoolSetting(value, settings.ComputerSeeOnly)
 	}
+	// The old name first, so CROW_APPROVAL_EXECUTOR wins when both are set.
+	if value := strings.TrimSpace(values["CROW_APPROVAL_CODEX"]); value != "" {
+		settings.ApprovalExecutor = value
+	}
 	for key, field := range map[string]*string{
 		"CROW_APPROVAL_COMPUTER":   &settings.ApprovalComputer,
 		"CROW_APPROVAL_TERMINAL":   &settings.ApprovalTerminal,
-		"CROW_APPROVAL_CODEX":      &settings.ApprovalCodex,
+		"CROW_APPROVAL_EXECUTOR":   &settings.ApprovalExecutor,
+		"CROW_APPROVAL_LEVEL":      &settings.ApprovalLevel,
 		"CROW_APPROVAL_FILE_WRITE": &settings.ApprovalFileWrite,
 	} {
 		if value := strings.TrimSpace(values[key]); value != "" {

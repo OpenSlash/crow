@@ -319,13 +319,17 @@ message Settings {
   bool llm_api_key_set = 19;
   // Long-term memory (profile in prompt + memory tools). Defaults to on.
   bool memory_enabled = 20;
-  // Approval policy per scope: every_turn, before_acting, once or never.
+  // Per-scope overrides of approval_level: every_turn, before_acting, once or
+  // never; empty or "auto" follows the level.
   string approval_computer = 21;
   string approval_terminal = 22;
-  string approval_codex = 23;
+  // Handing work to any executor; was approval_codex.
+  string approval_executor = 23;
   string approval_file_write = 24;
   // Computer use may only take screenshots.
   bool computer_see_only = 25;
   // Computer use is off until the user turns it on.
   bool computer_use_enabled = 26;
+  // cautious, balanced (default) or relaxed.
+  string approval_level = 27;
 }

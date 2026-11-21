@@ -205,8 +205,9 @@ struct RuntimeSettings: Codable, Equatable {
     var memoryEnabled: Bool = true
     var approvalComputer: String = ""
     var approvalTerminal: String = ""
-    var approvalCodex: String = ""
+    var approvalExecutor: String = ""
     var approvalFileWrite: String = ""
+    var approvalLevel: String = ""
     var computerSeeOnly: Bool = false
     var computerUseEnabled: Bool = false
 
@@ -216,8 +217,9 @@ struct RuntimeSettings: Codable, Equatable {
         case memoryEnabled
         case approvalComputer
         case approvalTerminal
-        case approvalCodex
+        case approvalExecutor
         case approvalFileWrite
+        case approvalLevel
         case agentMode
         case llmProvider
         case llmBaseUrl
@@ -254,8 +256,9 @@ struct RuntimeSettings: Codable, Equatable {
         memoryEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? false
         approvalComputer = try container.decodeIfPresent(String.self, forKey: .approvalComputer) ?? ""
         approvalTerminal = try container.decodeIfPresent(String.self, forKey: .approvalTerminal) ?? ""
-        approvalCodex = try container.decodeIfPresent(String.self, forKey: .approvalCodex) ?? ""
+        approvalExecutor = try container.decodeIfPresent(String.self, forKey: .approvalExecutor) ?? ""
         approvalFileWrite = try container.decodeIfPresent(String.self, forKey: .approvalFileWrite) ?? ""
+        approvalLevel = try container.decodeIfPresent(String.self, forKey: .approvalLevel) ?? ""
         computerSeeOnly = try container.decodeIfPresent(Bool.self, forKey: .computerSeeOnly) ?? false
         computerUseEnabled = try container.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
     }
@@ -272,8 +275,9 @@ struct RuntimeSettings: Codable, Equatable {
                 "memoryEnabled": memoryEnabled,
                 "approvalComputer": approvalComputer,
                 "approvalTerminal": approvalTerminal,
-                "approvalCodex": approvalCodex,
+                "approvalExecutor": approvalExecutor,
                 "approvalFileWrite": approvalFileWrite,
+                "approvalLevel": approvalLevel,
                 "computerSeeOnly": computerSeeOnly,
                 "computerUseEnabled": computerUseEnabled,
                 "sttLanguage": sttLanguage,
@@ -297,8 +301,9 @@ struct RuntimeSettings: Codable, Equatable {
             "CROW_MEMORY_ENABLED": memoryEnabled ? "true" : "false",
             "CROW_APPROVAL_COMPUTER": approvalComputer,
             "CROW_APPROVAL_TERMINAL": approvalTerminal,
-            "CROW_APPROVAL_CODEX": approvalCodex,
+            "CROW_APPROVAL_EXECUTOR": approvalExecutor,
             "CROW_APPROVAL_FILE_WRITE": approvalFileWrite,
+            "CROW_APPROVAL_LEVEL": approvalLevel,
             "CROW_COMPUTER_SEE_ONLY": computerSeeOnly ? "true" : "false",
             "CROW_COMPUTER_USE_ENABLED": computerUseEnabled ? "true" : "false",
             "CROW_ISLAND_SCREEN": islandScreen,
@@ -355,14 +360,14 @@ struct ApprovalGrantList: Decodable {
 
 /// Approval policy choices, matching the daemon's approval package.
 enum CrowApprovalScope: String, CaseIterable {
-    case computer, terminal, codex
+    case computer, terminal, executor
     case fileWrite = "file_write"
 
     var title: String {
         switch self {
         case .computer: return "Computer use"
         case .terminal: return "Terminal"
-        case .codex: return "Codex"
+        case .executor: return "Delegating to executors"
         case .fileWrite: return "File changes"
         }
     }
@@ -371,12 +376,19 @@ enum CrowApprovalScope: String, CaseIterable {
         switch self {
         case .computer: return "cursorarrow.click"
         case .terminal: return "terminal"
-        case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .executor: return "point.3.connected.trianglepath.dotted"
         case .fileWrite: return "doc.badge.gearshape"
         }
     }
 
-    var defaultPolicy: String { self == .terminal ? "every_turn" : "before_acting" }
+    /// The policy an approval level gives this scope, as in the daemon's Level.Policy.
+    func policy(for level: CrowApprovalLevel) -> String {
+        switch level {
+        case .cautious: return "every_turn"
+        case .relaxed: return "once"
+        case .balanced: return self == .terminal ? "every_turn" : "before_acting"
+        }
+    }
 
     /// Terminal commands always need some approval, so "never" is not offered.
     var policies: [(String, String)] {
@@ -387,6 +399,31 @@ enum CrowApprovalScope: String, CaseIterable {
             ("never", "Don't ask")
         ]
         return self == .terminal ? all.filter { $0.0 != "never" } : all
+    }
+}
+
+/// The one approval setting; per-scope policies are optional overrides of it.
+enum CrowApprovalLevel: String, CaseIterable {
+    case cautious, balanced, relaxed
+
+    init(setting: String) {
+        self = CrowApprovalLevel(rawValue: setting.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? .balanced
+    }
+
+    var title: String {
+        switch self {
+        case .cautious: return "Cautious"
+        case .balanced: return "Balanced"
+        case .relaxed: return "Relaxed"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .cautious: return "Asks before every action."
+        case .balanced: return "Asks once per task before acting; asks before every terminal command."
+        case .relaxed: return "Asks once, then allows that kind of action for 30 minutes. Terminal commands still ask at least once."
+        }
     }
 }
 
@@ -1537,6 +1574,10 @@ final class CrowWindowController: NSWindowController {
     private let llmAPIKeyField = NSSecureTextField(string: "")
     private let testModelButton = NSButton(title: L("Test"), target: nil, action: nil)
     private let memoryEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let approvalLevelPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let approvalLevelNote = NSTextField(wrappingLabelWithString: "")
+    private let approvalCustomizeButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let approvalAdvancedStack = NSStackView()
     private let approvalPopUps: [CrowApprovalScope: NSPopUpButton] = Dictionary(
         uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0, NSPopUpButton(frame: .zero, pullsDown: false)) }
     )
@@ -1864,7 +1905,31 @@ final class CrowWindowController: NSWindowController {
             ]
         )
 
-        var approvalRows: [NSView] = []
+        // One level for everything; "Customize by type" reveals per-scope overrides.
+        approvalLevelPopUp.removeAllItems()
+        for level in CrowApprovalLevel.allCases {
+            approvalLevelPopUp.addItem(withTitle: L(level.title))
+            approvalLevelPopUp.lastItem?.representedObject = level.rawValue
+        }
+        approvalLevelPopUp.target = self
+        approvalLevelPopUp.action = #selector(approvalLevelChanged)
+        approvalLevelNote.font = .systemFont(ofSize: 11)
+        approvalLevelNote.textColor = .secondaryLabelColor
+        approvalLevelNote.preferredMaxLayoutWidth = 452
+        let levelNoteRow = NSStackView(views: [approvalLevelNote, NSView()])
+        levelNoteRow.alignment = .top
+        levelNoteRow.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 10, right: 16)
+        let levelGroup = NSStackView(views: [settingsPopUpRow(symbol: "shield.lefthalf.filled", title: L("Approval level"), popUp: approvalLevelPopUp), levelNoteRow])
+        levelGroup.orientation = .vertical
+        levelGroup.spacing = 0
+        levelGroup.alignment = .width
+
+        approvalCustomizeButton.target = self
+        approvalCustomizeButton.action = #selector(approvalCustomizeToggled)
+        approvalAdvancedStack.orientation = .vertical
+        approvalAdvancedStack.spacing = 0
+        approvalAdvancedStack.alignment = .width
+        approvalAdvancedStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for scope in CrowApprovalScope.allCases {
             guard let popUp = approvalPopUps[scope] else { continue }
             popUp.removeAllItems()
@@ -1872,8 +1937,15 @@ final class CrowWindowController: NSWindowController {
                 popUp.addItem(withTitle: L(title))
                 popUp.lastItem?.representedObject = value
             }
-            approvalRows.append(settingsPopUpRow(symbol: scope.symbol, title: L(scope.title), popUp: popUp))
+            approvalAdvancedStack.addArrangedSubview(makeSeparator())
+            approvalAdvancedStack.addArrangedSubview(settingsPopUpRow(symbol: scope.symbol, title: L(scope.title), popUp: popUp))
         }
+        approvalAdvancedStack.isHidden = true
+        let customizeGroup = NSStackView(views: [settingsToggleRow(symbol: "slider.horizontal.3", title: L("Customize by type"), button: approvalCustomizeButton), approvalAdvancedStack])
+        customizeGroup.orientation = .vertical
+        customizeGroup.spacing = 0
+        customizeGroup.alignment = .width
+        var approvalRows: [NSView] = [levelGroup, customizeGroup]
         grantsLabel.textColor = .secondaryLabelColor
         grantsLabel.font = .systemFont(ofSize: 12)
         grantsLabel.lineBreakMode = .byTruncatingTail
@@ -2665,10 +2737,11 @@ final class CrowWindowController: NSWindowController {
         settings.memoryEnabled = memoryEnabledButton.state == .on
         settings.computerSeeOnly = computerSeeOnlyButton.state == .on
         settings.computerUseEnabled = computerUseEnabledButton.state == .on
-        settings.approvalComputer = selectedApprovalPolicy(.computer)
-        settings.approvalTerminal = selectedApprovalPolicy(.terminal)
-        settings.approvalCodex = selectedApprovalPolicy(.codex)
-        settings.approvalFileWrite = selectedApprovalPolicy(.fileWrite)
+        settings.approvalLevel = selectedApprovalLevel().rawValue
+        settings.approvalComputer = approvalOverride(.computer)
+        settings.approvalTerminal = approvalOverride(.terminal)
+        settings.approvalExecutor = approvalOverride(.executor)
+        settings.approvalFileWrite = approvalOverride(.fileWrite)
         settings.islandScreen = islandScreenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandHotkey = islandHotkeyRecorder.hotKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.islandIdleCloseSeconds = islandIdleCloseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2703,15 +2776,47 @@ final class CrowWindowController: NSWindowController {
         try? model.persistRuntimeSettings(settings)
     }
 
-    private func selectedApprovalPolicy(_ scope: CrowApprovalScope) -> String {
-        guard let popUp = approvalPopUps[scope] else { return scope.defaultPolicy }
-        return selectedPopUpValue(popUp, fallback: scope.defaultPolicy)
+    private func selectedApprovalLevel() -> CrowApprovalLevel {
+        CrowApprovalLevel(setting: selectedPopUpValue(approvalLevelPopUp, fallback: CrowApprovalLevel.balanced.rawValue))
+    }
+
+    /// "auto" (follow the level) unless the user customizes by type. Written
+    /// explicitly so an override left in .env does not come back.
+    private func approvalOverride(_ scope: CrowApprovalScope) -> String {
+        guard approvalCustomizeButton.state == .on, let popUp = approvalPopUps[scope] else { return "auto" }
+        return selectedPopUpValue(popUp, fallback: scope.policy(for: selectedApprovalLevel()))
+    }
+
+    /// Shows the level's policies in the per-type menus.
+    private func showLevelPolicies() {
+        let level = selectedApprovalLevel()
+        for scope in CrowApprovalScope.allCases {
+            if let popUp = approvalPopUps[scope] {
+                selectPopUp(popUp, value: scope.policy(for: level), fallback: scope.policy(for: level))
+            }
+        }
+    }
+
+    @objc private func approvalLevelChanged() {
+        approvalLevelNote.stringValue = L(selectedApprovalLevel().summary)
+        if approvalCustomizeButton.state != .on {
+            showLevelPolicies()
+        }
+    }
+
+    @objc private func approvalCustomizeToggled() {
+        let on = approvalCustomizeButton.state == .on
+        if on {
+            showLevelPolicies()
+        }
+        approvalAdvancedStack.isHidden = !on
     }
 
     private func grantsSummary(_ grants: [ApprovalGrant]) -> String {
         guard !grants.isEmpty else { return L("None") }
         let formatter = ISO8601DateFormatter()
-        let titles = Dictionary(uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0.rawValue, $0.title) })
+        var titles = Dictionary(uniqueKeysWithValues: CrowApprovalScope.allCases.map { ($0.rawValue, $0.title) })
+        titles["codex"] = CrowApprovalScope.executor.title // grants saved under the old name
         return grants.map { grant in
             let minutes = formatter.date(from: grant.expiresAt).map { max(1, Int($0.timeIntervalSinceNow / 60)) } ?? 0
             return "\(L(titles[grant.scope] ?? grant.scope)) · \(minutes) \(L("min"))"
@@ -3036,17 +3141,29 @@ final class CrowWindowController: NSWindowController {
         if let item = uiLanguagePopUp.itemArray.first(where: { ($0.representedObject as? String) == settings.uiLanguage }) {
             uiLanguagePopUp.select(item)
         }
-        for (scope, value) in [
-            (CrowApprovalScope.computer, settings.approvalComputer),
+        let level = CrowApprovalLevel(setting: settings.approvalLevel)
+        selectPopUp(approvalLevelPopUp, value: level.rawValue, fallback: CrowApprovalLevel.balanced.rawValue)
+        approvalLevelNote.stringValue = L(level.summary)
+        let raw: [(CrowApprovalScope, String)] = [
+            (.computer, settings.approvalComputer),
             (.terminal, settings.approvalTerminal),
-            (.codex, settings.approvalCodex),
+            (.executor, settings.approvalExecutor),
             (.fileWrite, settings.approvalFileWrite)
-        ] {
-            if let popUp = approvalPopUps[scope] {
-                // Terminal "never" is stored as-is but applied as "once" by the daemon.
-                let shown = scope == .terminal && value == "never" ? "once" : value
-                selectPopUp(popUp, value: shown, fallback: scope.defaultPolicy)
-            }
+        ]
+        let overrides = raw.map { ($0.0, $0.1.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+        // Older versions saved every type explicitly; values equal to the level's are not customizations.
+        let customized = overrides.contains { scope, value in
+            let effective = scope == .terminal && value == "never" ? "once" : value
+            return !value.isEmpty && value != "auto" && effective != scope.policy(for: level)
+        }
+        approvalCustomizeButton.state = customized ? .on : .off
+        approvalAdvancedStack.isHidden = !customized
+        for (scope, value) in overrides {
+            guard let popUp = approvalPopUps[scope] else { continue }
+            var shown = value.isEmpty || value == "auto" ? scope.policy(for: level) : value
+            // Terminal "never" is stored as-is but applied as "once" by the daemon.
+            if scope == .terminal && shown == "never" { shown = "once" }
+            selectPopUp(popUp, value: shown, fallback: scope.policy(for: level))
         }
     }
 

@@ -64,7 +64,7 @@ func request(t *testing.T, s *server, task, scope string) bool {
 
 func TestApprovalPolicies(t *testing.T) {
 	s := newTestServer(t)
-	t.Setenv("CROW_APPROVAL_CODEX", "never")
+	t.Setenv("CROW_APPROVAL_EXECUTOR", "never")
 	t.Setenv("CROW_APPROVAL_FILE_WRITE", "once")
 	t.Setenv("CROW_APPROVAL_TERMINAL", "never") // raised to once
 
@@ -98,7 +98,7 @@ func TestApprovalPolicies(t *testing.T) {
 
 func TestBeforeActingIsPerTask(t *testing.T) {
 	s := newTestServer(t)
-	t.Setenv("CROW_APPROVAL_CODEX", "before_acting")
+	t.Setenv("CROW_APPROVAL_EXECUTOR", "before_acting")
 	asked := decide(s, true)
 	if !request(t, s, "t1", "codex") || !<-asked {
 		t.Fatal("first action should ask")
@@ -109,5 +109,26 @@ func TestBeforeActingIsPerTask(t *testing.T) {
 	asked = decide(s, true)
 	if !request(t, s, "t2", "codex") || !<-asked {
 		t.Fatal("a new task should ask")
+	}
+}
+
+func TestApprovalLevel(t *testing.T) {
+	s := newTestServer(t)
+	t.Setenv("CROW_APPROVAL_LEVEL", "relaxed")
+	t.Setenv("CROW_APPROVAL_COMPUTER", "auto")
+	asked := decide(s, true)
+	if !request(t, s, "t1", "computer") || !<-asked {
+		t.Fatal("relaxed should ask the first time")
+	}
+	if !request(t, s, "t2", "computer") {
+		t.Fatal("relaxed grant should cover a later task")
+	}
+	// "codex" is the old executor scope name; cautious asks every time.
+	t.Setenv("CROW_APPROVAL_LEVEL", "cautious")
+	for i := 0; i < 2; i++ {
+		asked = decide(s, true)
+		if !request(t, s, "t1", "codex") || !<-asked {
+			t.Fatal("cautious should ask every time")
+		}
 	}
 }

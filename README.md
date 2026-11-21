@@ -47,6 +47,10 @@ Requirements: macOS, Go 1.24+, Swift toolchain.
 
 Hold `⌃⌥D` and speak in any app, or tap it to start and tap again to finish. Crow transcribes the recording, has your model tidy it up (fillers removed, self-corrections applied, misheard words fixed, punctuation added, nothing translated) and types the result at the cursor. Without Accessibility permission the text is left on the clipboard. Change the shortcut, or set `off`, under Settings › Dictation, and add names and terms recognition should get right under Vocabulary; the vocabulary also applies to the island.
 
+## Approvals
+
+One setting, Settings › Approvals › Approval level, decides when Crow asks before acting: **Cautious** asks before every action, **Balanced** (default) asks once per task and before every terminal command, and **Relaxed** asks once and then allows that kind of action for 30 minutes. Terminal commands are never run without asking at least once. Approvals are grouped by kind of action (computer use, terminal, file changes, delegating to executors), not by tool, so a new executor such as Claude Code needs no setting of its own; its commands and file edits follow the terminal and file rules. Turn on "Customize by type" to override a single kind.
+
 ## Computer Use over MCP
 
 Other agents can see and operate this Mac through Crow. Turn on computer use in Crow Settings, then register the MCP server:

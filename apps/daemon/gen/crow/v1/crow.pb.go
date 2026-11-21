@@ -2467,17 +2467,21 @@ type Settings struct {
 	LlmApiKeySet bool   `protobuf:"varint,19,opt,name=llm_api_key_set,json=llmApiKeySet,proto3" json:"llm_api_key_set,omitempty"`
 	// Long-term memory (profile in prompt + memory tools). Defaults to on.
 	MemoryEnabled bool `protobuf:"varint,20,opt,name=memory_enabled,json=memoryEnabled,proto3" json:"memory_enabled,omitempty"`
-	// Approval policy per scope: every_turn, before_acting, once or never.
-	ApprovalComputer  string `protobuf:"bytes,21,opt,name=approval_computer,json=approvalComputer,proto3" json:"approval_computer,omitempty"`
-	ApprovalTerminal  string `protobuf:"bytes,22,opt,name=approval_terminal,json=approvalTerminal,proto3" json:"approval_terminal,omitempty"`
-	ApprovalCodex     string `protobuf:"bytes,23,opt,name=approval_codex,json=approvalCodex,proto3" json:"approval_codex,omitempty"`
+	// Per-scope overrides of approval_level: every_turn, before_acting, once or
+	// never; empty or "auto" follows the level.
+	ApprovalComputer string `protobuf:"bytes,21,opt,name=approval_computer,json=approvalComputer,proto3" json:"approval_computer,omitempty"`
+	ApprovalTerminal string `protobuf:"bytes,22,opt,name=approval_terminal,json=approvalTerminal,proto3" json:"approval_terminal,omitempty"`
+	// Handing work to any executor; was approval_codex.
+	ApprovalExecutor  string `protobuf:"bytes,23,opt,name=approval_executor,json=approvalExecutor,proto3" json:"approval_executor,omitempty"`
 	ApprovalFileWrite string `protobuf:"bytes,24,opt,name=approval_file_write,json=approvalFileWrite,proto3" json:"approval_file_write,omitempty"`
 	// Computer use may only take screenshots.
 	ComputerSeeOnly bool `protobuf:"varint,25,opt,name=computer_see_only,json=computerSeeOnly,proto3" json:"computer_see_only,omitempty"`
 	// Computer use is off until the user turns it on.
 	ComputerUseEnabled bool `protobuf:"varint,26,opt,name=computer_use_enabled,json=computerUseEnabled,proto3" json:"computer_use_enabled,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// cautious, balanced (default) or relaxed.
+	ApprovalLevel string `protobuf:"bytes,27,opt,name=approval_level,json=approvalLevel,proto3" json:"approval_level,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Settings) Reset() {
@@ -2622,9 +2626,9 @@ func (x *Settings) GetApprovalTerminal() string {
 	return ""
 }
 
-func (x *Settings) GetApprovalCodex() string {
+func (x *Settings) GetApprovalExecutor() string {
 	if x != nil {
-		return x.ApprovalCodex
+		return x.ApprovalExecutor
 	}
 	return ""
 }
@@ -2648,6 +2652,13 @@ func (x *Settings) GetComputerUseEnabled() bool {
 		return x.ComputerUseEnabled
 	}
 	return false
+}
+
+func (x *Settings) GetApprovalLevel() string {
+	if x != nil {
+		return x.ApprovalLevel
+	}
+	return ""
 }
 
 var File_crow_v1_crow_proto protoreflect.FileDescriptor
@@ -2833,7 +2844,7 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	" \x01(\tR\tdecidedAt\"\x14\n" +
 	"\x12GetSettingsRequest\"D\n" +
 	"\x13SaveSettingsRequest\x12-\n" +
-	"\bsettings\x18\x01 \x01(\v2\x11.crow.v1.SettingsR\bsettings\"\xfa\x06\n" +
+	"\bsettings\x18\x01 \x01(\v2\x11.crow.v1.SettingsR\bsettings\"\xa7\a\n" +
 	"\bSettings\x12!\n" +
 	"\fstt_language\x18\a \x01(\tR\vsttLanguage\x12!\n" +
 	"\ftts_provider\x18\b \x01(\tR\vttsProvider\x12\x1b\n" +
@@ -2853,11 +2864,12 @@ const file_crow_v1_crow_proto_rawDesc = "" +
 	"\x0fllm_api_key_set\x18\x13 \x01(\bR\fllmApiKeySet\x12%\n" +
 	"\x0ememory_enabled\x18\x14 \x01(\bR\rmemoryEnabled\x12+\n" +
 	"\x11approval_computer\x18\x15 \x01(\tR\x10approvalComputer\x12+\n" +
-	"\x11approval_terminal\x18\x16 \x01(\tR\x10approvalTerminal\x12%\n" +
-	"\x0eapproval_codex\x18\x17 \x01(\tR\rapprovalCodex\x12.\n" +
+	"\x11approval_terminal\x18\x16 \x01(\tR\x10approvalTerminal\x12+\n" +
+	"\x11approval_executor\x18\x17 \x01(\tR\x10approvalExecutor\x12.\n" +
 	"\x13approval_file_write\x18\x18 \x01(\tR\x11approvalFileWrite\x12*\n" +
 	"\x11computer_see_only\x18\x19 \x01(\bR\x0fcomputerSeeOnly\x120\n" +
-	"\x14computer_use_enabled\x18\x1a \x01(\bR\x12computerUseEnabledJ\x04\b\x01\x10\aR\n" +
+	"\x14computer_use_enabled\x18\x1a \x01(\bR\x12computerUseEnabled\x12%\n" +
+	"\x0eapproval_level\x18\x1b \x01(\tR\rapprovalLevelJ\x04\b\x01\x10\aR\n" +
 	"codex_pathR\tcodex_cwdR\vcodex_modelR\x13codex_reuse_contextR\x15codex_approval_policyR\rcodex_sandbox2\xa1\x01\n" +
 	"\x12CrowRuntimeService\x12D\n" +
 	"\vGetSnapshot\x12\x1b.crow.v1.GetSnapshotRequest\x1a\x18.crow.v1.RuntimeSnapshot\x12E\n" +

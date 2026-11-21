@@ -796,7 +796,7 @@ func acpApprovalScope(kind string) string {
 	case "edit", "delete", "move":
 		return "file_write"
 	default:
-		return "codex"
+		return "executor"
 	}
 }
 
