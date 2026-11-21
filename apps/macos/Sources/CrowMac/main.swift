@@ -1545,6 +1545,7 @@ final class CrowWindowController: NSWindowController {
     private let computerUseEnabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let uiLanguagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private var lastRenderedSettings: RuntimeSettings?
+    private var lastRenderedExecutors: String?
     private weak var settingsScroll: NSScrollView?
     private weak var computerUseCard: NSView?
     private let screenRecordingButton = NSButton(title: L("Grant"), target: nil, action: nil)
@@ -3038,8 +3039,16 @@ final class CrowWindowController: NSWindowController {
 
     private func renderExecutors() {
         guard currentView == .executors else { return }
-        executorSummaryLabel.stringValue = executorSummaryText()
-        executorDetailLabel.stringValue = executorDetailText()
+        let summary = executorSummaryText()
+        let detail = executorDetailText()
+        // render() runs on every model update; rebuilding unchanged rows makes the page flicker.
+        let signature = ([summary, detail] + model.executorsSnapshot.executors.map {
+            [$0.id, $0.name, $0.adapter, self.executorMetaText($0), "\($0.healthy)", "\($0.enabled)", "\($0.fallbackValue)"].joined(separator: "|")
+        }).joined(separator: "\n")
+        guard signature != lastRenderedExecutors else { return }
+        lastRenderedExecutors = signature
+        executorSummaryLabel.stringValue = summary
+        executorDetailLabel.stringValue = detail
         executorListStack.arrangedSubviews.forEach { view in
             executorListStack.removeArrangedSubview(view)
             view.removeFromSuperview()
