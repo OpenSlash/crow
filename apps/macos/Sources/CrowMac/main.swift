@@ -2166,17 +2166,29 @@ final class CrowWindowController: NSWindowController {
         return box
     }
 
-    private func makeSmallBadge(_ text: String) -> NSTextField {
-        let badge = NSTextField(labelWithString: text)
-        badge.font = .systemFont(ofSize: 11, weight: .semibold)
-        badge.textColor = .controlAccentColor
-        badge.alignment = .center
+    private func makeSmallBadge(_ text: String) -> NSView {
+        // A label draws its text at the top of its frame, so the pill is a container
+        // with the label centered inside it.
+        let badge = NSView()
+        badge.translatesAutoresizingMaskIntoConstraints = false
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 6
         badge.layer?.cornerCurve = .continuous
         badge.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
-        badge.widthAnchor.constraint(equalToConstant: 72).isActive = true
-        badge.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .controlAccentColor
+        label.alignment = .center
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(label)
+        NSLayoutConstraint.activate([
+            badge.widthAnchor.constraint(equalToConstant: 72),
+            badge.heightAnchor.constraint(equalToConstant: 22),
+            label.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: badge.leadingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: badge.trailingAnchor, constant: -4),
+        ])
         return badge
     }
 
@@ -2601,7 +2613,8 @@ final class CrowWindowController: NSWindowController {
         guard let dir = ProcessInfo.processInfo.environment["CROW_SETTINGS_SNAPSHOT"], !dir.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self, let content = self.window?.contentView else { return }
-            self.viewControl.selectedSegment = MainView.settings.rawValue
+            let section = ProcessInfo.processInfo.environment["CROW_SETTINGS_SNAPSHOT_SECTION"]
+            self.viewControl.selectedSegment = (section == "executors" ? MainView.executors : MainView.settings).rawValue
             self.switchMainView()
             let scroll = self.settingsPage.arrangedSubviews.compactMap { $0 as? NSScrollView }.first
             let jumpToComputerUse = ProcessInfo.processInfo.environment["CROW_SETTINGS_SNAPSHOT_SECTION"] == "computer"
