@@ -2350,6 +2350,7 @@ enum CrowStreamingEventPoster {
 extension Notification.Name {
     static let crowStreamingSpeechLevel = Notification.Name("dev.crow.streamingSpeech.level")
     static let crowStreamingSpeechTranscript = Notification.Name("dev.crow.streamingSpeech.transcript")
+    static let crowApprovalMayBePending = Notification.Name("dev.crow.approvalMayBePending")
     static let crowStreamingSpeechError = Notification.Name("dev.crow.streamingSpeech.error")
     static let crowStreamingSpeechPlaybackStarted = Notification.Name("dev.crow.streamingSpeech.playbackStarted")
     static let crowStreamingSpeechPlaybackEnded = Notification.Name("dev.crow.streamingSpeech.playbackEnded")
@@ -4101,6 +4102,10 @@ final class CrowIslandView: NSView {
         }, onActivity: { [weak self] activity in
             DispatchQueue.main.async {
                 started.value = true
+                // A tool may ask for approval mid-turn; fetch it without waiting for the poll.
+                if activity.label == "Running command" {
+                    NotificationCenter.default.post(name: .crowApprovalMayBePending, object: nil)
+                }
                 guard let self, self.voiceAgentText.isEmpty else { return }
                 self.voiceHint = L(activity.label)
                 self.needsDisplay = true

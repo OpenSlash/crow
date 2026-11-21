@@ -1040,6 +1040,13 @@ final class CrowAppModel: ObservableObject {
         computerUse.onStop = { [weak self] in self?.cancelActiveTask() }
         computerUse.onOpenSettings = { [weak self] in self?.openComputerUseSettingsHandler?() }
         computerUse.start(client: client)
+        NotificationCenter.default.addObserver(forName: .crowApprovalMayBePending, object: nil, queue: .main) { [weak self] _ in
+            for delay in [0.3, 1.0, 2.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    Swift.Task { await self?.refresh() }
+                }
+            }
+        }
         CrowDictation.shared.polish = { text, app in
             do {
                 return try await client.polishTranscript(text, app: app)

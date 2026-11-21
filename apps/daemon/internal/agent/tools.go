@@ -54,14 +54,15 @@ func (t useComputer) Enabled() bool { return t.enabled == nil || t.enabled() }
 
 func (useComputer) PromptNote() string {
 	return "You can see and operate this Mac's screen through use_computer. Never say you cannot see the screen. " +
-		"For any request to look at, read, check or describe the screen, a window or an app, or to do something in an app, call use_computer."
+		"For any request to look at, read, check or describe the screen, a window or an app, or to operate an app's graphical interface, call use_computer. " +
+		"Shell commands are not computer use: use run_command or delegate_to_codex instead of typing into Terminal."
 }
 
 func (useComputer) Spec() llm.Tool {
 	return llm.Tool{
 		Name: "use_computer",
 		Description: "Look at, read or operate the user's Mac screen: take screenshots, read what apps show, and use the mouse and keyboard. " +
-			"Use it whenever the user asks what is on screen or wants something done in an app. Never for signing in, passwords or payments.",
+			"Use it whenever the user asks what is on screen or wants something done in an app's graphical interface. Not for shell commands. Never for signing in, passwords or payments.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -140,7 +141,7 @@ func (delegateToCodex) Spec() llm.Tool {
 	return llm.Tool{
 		Name: "delegate_to_codex",
 		Description: "Hand a task to Codex, a local coding agent that can read and edit files, run terminal commands and work in code repositories. " +
-			"Use it only for work on this Mac's files, code repositories or terminal. " +
+			"Use it for coding and for multi-step work on this Mac's files or repositories; a quick command you can run yourself with run_command. " +
 			"Do not use it for general questions, chat, weather, news or anything you can answer directly.",
 		Parameters: map[string]any{
 			"type": "object",

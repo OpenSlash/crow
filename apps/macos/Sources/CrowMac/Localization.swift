@@ -238,6 +238,7 @@ private let chineseStrings: [String: String] = [
     "Allow:": "允许：",
     "Allow Crow to continue?": "允许 Crow 继续吗？",
     "Allow: run a local command": "允许：运行本地命令",
+    "Run a command": "运行命令",
     "Review required before continuing.": "继续之前需要你确认。",
     "Open full details in Crow.": "在 Crow 中查看完整详情。",
 

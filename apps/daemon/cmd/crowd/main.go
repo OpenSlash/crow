@@ -179,7 +179,7 @@ func register(mux *http.ServeMux, runtime *server, token string) {
 	mux.HandleFunc("/v1/executors", runtime.executorsHTTPHandler(token))
 
 	agentHandler := agent.NewHandler(llmProvider, intEnv("CROW_AGENT_MAX_STEPS", agent.DefaultMaxSteps),
-		append([]agent.Tool{agent.DelegateToCodexIf(runtime.hasCodeExecutor), agent.UseComputer(computerUseEnabled)},
+		append([]agent.Tool{agent.RunCommand(runtime.approveCommand), agent.DelegateToCodexIf(runtime.hasCodeExecutor), agent.UseComputer(computerUseEnabled)},
 			append(agent.ReminderTools(reminderAdapter{runtime.store}),
 				agent.OpenComputerUseSettings(func() bool { return !computerUseEnabled() }, runtime.openComputerUseSettings))...)...).
 		WithMemory(memory.Open(memory.DefaultDir()), func() bool { return boolEnvDefault("CROW_MEMORY_ENABLED", true) }).
@@ -713,6 +713,62 @@ func (s *server) RevokeGrants(ctx context.Context, req *connect.Request[crowv1.R
 		return nil, err
 	}
 	return s.ListGrants(ctx, connect.NewRequest(&crowv1.ListGrantsRequest{}))
+}
+
+// conversationApprovalKey stands in for a task ID when the conversation itself,
+// not a task, asks: "ask once per task" then means once per daemon run.
+const conversationApprovalKey = "conversation"
+
+// approveCommand gates run_command under the terminal approval policy. The prompt
+// belongs to no task, so the island shows it over the conversation.
+func (s *server) approveCommand(ctx context.Context, command, reason string) (bool, error) {
+	scope := approval.ScopeTerminal
+	if allowed, _ := s.gate.Allowed(conversationApprovalKey, scope); allowed {
+		return true, nil
+	}
+	now := time.Now().Format(time.RFC3339)
+	approvalID := fmt.Sprintf("approval-%d", time.Now().UnixNano())
+	waiter := make(chan bool, 1)
+	s.mu.Lock()
+	s.approvals[approvalID] = waiter
+	previous := s.state
+	s.mu.Unlock()
+	defer s.unregisterApprovalWaiter(approvalID)
+
+	if err := s.store.CreateApproval(&crowv1.Approval{
+		Id:             approvalID,
+		TaskId:         conversationApprovalKey,
+		Title:          "Run a command",
+		Description:    firstNonEmpty(reason, "Crow wants to run a command on this Mac."),
+		RiskLevel:      2,
+		ProposedAction: "Run a command",
+		Preview:        command,
+		Status:         "pending",
+		CreatedAt:      now,
+	}); err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	s.state = &crowv1.RuntimeState{Status: "waiting_approval", Phase: "approval", Title: "Approval Required", Message: "Run a command", PendingApprovals: 1}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		if s.state.GetPhase() == "approval" && s.state.GetActiveTaskId() == "" {
+			s.state = previous
+		}
+		s.mu.Unlock()
+	}()
+
+	select {
+	case <-ctx.Done():
+		_, _ = s.store.DecideApproval(approvalID, false, "cancelled")
+		return false, ctx.Err()
+	case approved := <-waiter:
+		if err := s.gate.Record(conversationApprovalKey, scope, approved); err != nil {
+			log.Printf("record approval grant failed: %v", err)
+		}
+		return approved, nil
+	}
 }
 
 // askApproval shows an approval prompt and waits for the user's decision.
